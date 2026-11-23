@@ -59,6 +59,7 @@ const CATEGORIES = {
   tech: {
     key: 'tech',
     label: '1 - Technical Support | الدعم الفني',
+    shortLabel: 'Technical Support',
     emoji: '🛠️',
     style: ButtonStyle.Secondary,
     body:
@@ -70,6 +71,7 @@ const CATEGORIES = {
   general: {
     key: 'general',
     label: '2 - General Questions | الاستفسارات العامة',
+    shortLabel: 'General Questions',
     emoji: '💬',
     style: ButtonStyle.Secondary,
     body:
@@ -81,6 +83,7 @@ const CATEGORIES = {
   store: {
     key: 'store',
     label: '3 - Store & Payments | المتجر والمدفوعات',
+    shortLabel: 'Store & Payments',
     emoji: '🛒',
     style: ButtonStyle.Secondary,
     body:
@@ -92,6 +95,7 @@ const CATEGORIES = {
   reports: {
     key: 'reports',
     label: '4 - Player Reports | الشكاوى والبلاغات',
+    shortLabel: 'Report Player',
     emoji: '🚨',
     style: ButtonStyle.Secondary,
     body:
@@ -103,6 +107,7 @@ const CATEGORIES = {
   management: {
     key: 'management',
     label: '5 - Management Contact | التواصل مع الإدارة',
+    shortLabel: 'High Support',
     emoji: '👑',
     style: ButtonStyle.Secondary,
     body:
@@ -114,6 +119,7 @@ const CATEGORIES = {
   media: {
     key: 'media',
     label: '6 - Media & Partnerships | التقديم على الميديا',
+    shortLabel: 'Media Apply',
     emoji: '🎥',
     style: ButtonStyle.Secondary,
     body:
@@ -133,13 +139,14 @@ function loadData() {
     unclaim: { style: 'Secondary', roleId: null },
     call_staff: { style: 'Secondary', roleId: null },
     call_user: { style: 'Secondary', roleId: null },
+    summon_user: { style: 'Secondary', roleId: null },
     close: { style: 'Danger', roleId: null }
   };
 
   if (!fs.existsSync(DATA_FILE)) {
     const initial = {
       tickets: {},
-      claimStats: {}, // userId -> count
+      claimStats: {},
       topBoardMessageId: null,
       buttons: defaultButtons
     };
@@ -189,8 +196,40 @@ function isHighStaff(member) {
   return hasAnyRole(member, CONFIG.highRoles);
 }
 
-function isAnyStaff(member) {
-  return isJuniorStaff(member) || isSeniorStaff(member) || isHighStaff(member);
+// قراءة أن الشخص إداري دون الاعتماد الصارم على IDs محددة فقط
+function isAnyStaff(member, ticket = null) {
+  if (!member) return false;
+  if (ticket && ticket.claimedBy && member.id === ticket.claimedBy) return true;
+
+  if (isJuniorStaff(member) || isSeniorStaff(member) || isHighStaff(member)) {
+    return true;
+  }
+
+  const perms = member.permissions;
+  if (
+    perms?.has(PermissionFlagsBits.Administrator) ||
+    perms?.has(PermissionFlagsBits.ManageChannels) ||
+    perms?.has(PermissionFlagsBits.ManageMessages) ||
+    perms?.has(PermissionFlagsBits.ModerateMembers) ||
+    perms?.has(PermissionFlagsBits.KickMembers) ||
+    perms?.has(PermissionFlagsBits.BanMembers) ||
+    perms?.has(PermissionFlagsBits.ManageRoles)
+  ) {
+    return true;
+  }
+
+  const staffKeywords = [
+    'admin', 'staff', 'mod', 'moderator', 'support', 'management', 'manager',
+    'owner', 'helper', 'trial', 'ادارة', 'إدارة', 'اداري', 'إداري', 'مشرف', 'دعم', 'مساعد'
+  ];
+
+  return Boolean(
+    member.roles?.cache?.some((r) => {
+      if (r.id === member.guild?.id) return false;
+      const roleName = (r.name || '').toLowerCase();
+      return staffKeywords.some((kw) => roleName.includes(kw));
+    })
+  );
 }
 
 function getCategoryMentions(categoryKey) {
@@ -262,53 +301,22 @@ async function updateTopClaimsBoard() {
   }
 }
 
-function buildPanelComponents() {
-  const panelText =
-    `ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤSoftMC | Support Center\n\n` +
-    `${CATEGORIES.tech.body}\n\n` +
-    `${CATEGORIES.general.body}\n\n` +
-    `${CATEGORIES.store.body}\n\n` +
-    `${CATEGORIES.reports.body}\n\n` +
-    `${CATEGORIES.management.body}\n\n` +
-    `${CATEGORIES.media.body}`;
+// كل قسم ومعاه الزرار بتاعه تحتيه مباشرة
+function buildCategoryMessages() {
+  return Object.values(CATEGORIES).map((cat) => {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`open_ticket_${cat.key}`)
+        .setLabel(cat.shortLabel)
+        .setEmoji(cat.emoji)
+        .setStyle(cat.style)
+    );
 
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('open_ticket_tech')
-      .setLabel('1 - Technical Support')
-      .setEmoji('🛠️')
-      .setStyle(CATEGORIES.tech.style),
-    new ButtonBuilder()
-      .setCustomId('open_ticket_general')
-      .setLabel('2 - General Questions')
-      .setEmoji('💬')
-      .setStyle(CATEGORIES.general.style),
-    new ButtonBuilder()
-      .setCustomId('open_ticket_store')
-      .setLabel('3 - Store & Payments')
-      .setEmoji('🛒')
-      .setStyle(CATEGORIES.store.style)
-  );
-
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('open_ticket_reports')
-      .setLabel('4 - Player Reports')
-      .setEmoji('🚨')
-      .setStyle(CATEGORIES.reports.style),
-    new ButtonBuilder()
-      .setCustomId('open_ticket_management')
-      .setLabel('5 - Management Contact')
-      .setEmoji('👑')
-      .setStyle(CATEGORIES.management.style),
-    new ButtonBuilder()
-      .setCustomId('open_ticket_media')
-      .setLabel('6 - Media & Partnerships')
-      .setEmoji('🎥')
-      .setStyle(CATEGORIES.media.style)
-  );
-
-  return { content: panelText, components: [row1, row2] };
+    return {
+      content: `${cat.body}\n────────────────────`,
+      components: [row]
+    };
+  });
 }
 
 function buildTicketActionRows(buttonSettings) {
@@ -316,6 +324,7 @@ function buildTicketActionRows(buttonSettings) {
   const unclaimCfg = buttonSettings.unclaim || { style: 'Secondary' };
   const callStaffCfg = buttonSettings.call_staff || { style: 'Secondary' };
   const callUserCfg = buttonSettings.call_user || { style: 'Secondary' };
+  const summonUserCfg = buttonSettings.summon_user || { style: 'Secondary' };
   const closeCfg = buttonSettings.close || { style: 'Danger' };
 
   const row1 = new ActionRowBuilder().addComponents(
@@ -338,6 +347,10 @@ function buildTicketActionRows(buttonSettings) {
   );
 
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('tkt_summon_user')
+      .setLabel('استدعاء عضو')
+      .setStyle(mapStyle(summonUserCfg.style)),
     new ButtonBuilder()
       .setCustomId('tkt_close')
       .setLabel('إغلاق')
@@ -365,10 +378,14 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      const panel = buildPanelComponents();
-      await interaction.channel.send(panel);
+      await interaction.channel.send({ content: '# SoftMC | Support Center' });
+      const categoryMsgs = buildCategoryMessages();
+      for (const msg of categoryMsgs) {
+        await interaction.channel.send(msg);
+      }
+
       return interaction.reply({
-        content: '✅ تم إرسال لوحة **SoftMC | Support Center** بنجاح.',
+        content: '✅ تم إرسال لوحة **SoftMC | Support Center** وكل قسم ومعاه الزرار بتاعه.',
         flags: MessageFlags.Ephemeral
       });
     }
@@ -387,67 +404,18 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const id = interaction.customId;
 
-    // زر إعادة تحميل لوحة التوب 5
     if (id === 'refresh_top_claims') {
       const data = loadData();
       const payload = buildTopClaimsPayload(data);
       return interaction.update(payload);
     }
 
-    // 1) فتح قسم من لوحة التذاكر
+    // 1) فتح قسم من لوحة التذاكر (بما فيهم الميديا كتكت عادي)
     if (id.startsWith('open_ticket_')) {
       const catKey = id.replace('open_ticket_', '');
       const category = CATEGORIES[catKey];
       if (!category) return;
 
-      // قسم الميديا -> يفتح Modal بـ 5 أسئلة ويروح لروم الميديا
-      if (catKey === 'media') {
-        const modal = new ModalBuilder()
-          .setCustomId('media_apply_modal')
-          .setTitle('تقديم الميديا | Media Application');
-
-        const q1 = new TextInputBuilder()
-          .setCustomId('media_user')
-          .setLabel('1 - يوزر حسابك')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const q2 = new TextInputBuilder()
-          .setCustomId('media_platforms')
-          .setLabel('2 - انستا ولا تيك ولا فيس ولا تلي ولا جميع ما سبق')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const q3 = new TextInputBuilder()
-          .setCustomId('media_followers')
-          .setLabel('3 - عدد متابعين والمتفاعلين')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const q4 = new TextInputBuilder()
-          .setCustomId('media_reason')
-          .setLabel('4 - سبب تقديم')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true);
-
-        const q5 = new TextInputBuilder()
-          .setCustomId('media_age_nat')
-          .setLabel('5 - جنسيتك وعمرك')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(q1),
-          new ActionRowBuilder().addComponents(q2),
-          new ActionRowBuilder().addComponents(q3),
-          new ActionRowBuilder().addComponents(q4),
-          new ActionRowBuilder().addComponents(q5)
-        );
-
-        return interaction.showModal(modal);
-      }
-
-      // باقي الأقسام -> إنشاء روم تذكرة
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const data = loadData();
@@ -500,10 +468,15 @@ client.on('interactionCreate', async (interaction) => {
         .replace(/[^a-z0-9-_]/g, '')
         .slice(0, 90) || `ticket-${Date.now().toString().slice(-5)}`;
 
+      const targetParent =
+        catKey === 'media' && CONFIG.mediaChannelId
+          ? CONFIG.mediaChannelId
+          : CONFIG.ticketCategoryId || null;
+
       const channel = await guild.channels.create({
         name: safeName,
         type: ChannelType.GuildText,
-        parent: CONFIG.ticketCategoryId || null,
+        parent: targetParent && guild.channels.cache.get(targetParent)?.type === ChannelType.GuildCategory ? targetParent : (CONFIG.ticketCategoryId || null),
         permissionOverwrites
       });
 
@@ -511,7 +484,7 @@ client.on('interactionCreate', async (interaction) => {
         ownerId: member.id,
         categoryKey: catKey,
         claimedBy: null,
-        claimedHistory: [], // سجل من استلم هذا التكت لمنع تكرار الحساب لنفس الإداري
+        claimedHistory: [],
         createdAt: new Date().toISOString()
       };
       saveData(data);
@@ -545,8 +518,8 @@ client.on('interactionCreate', async (interaction) => {
 
       const member = interaction.member;
       const isOwner = interaction.user.id === ticket.ownerId;
-      const staffMember = isAnyStaff(member) && !isOwner;
-      const seniorOrHigh = isSeniorStaff(member) || isHighStaff(member);
+      const isClaimer = ticket.claimedBy === interaction.user.id;
+      const staffMember = isAnyStaff(member, ticket) && !isOwner;
 
       const btnKey = id.replace('tkt_', '');
       const btnCfg = data.buttons[btnKey];
@@ -557,9 +530,9 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // زر الاستلام (Claim) + عداد الاستلام الذكي
+      // زر الاستلام (Claim)
       if (id === 'tkt_claim') {
-        if (isOwner || !staffMember) {
+        if (!staffMember) {
           return interaction.reply({
             content: '❌ هذا الزر مخصص للإدارة فقط ولا يمكن لصاحب التذكرة استخدامه.',
             flags: MessageFlags.Ephemeral
@@ -599,84 +572,9 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: replyMsg });
       }
 
-      // لو التذكرة مش مستلمة: الإدارة الصغرى تتمنع ويطلع لها "يرجى استلام التكت"، والإدارة الكبرى عادي
-      if (!ticket.claimedBy && !seniorOrHigh) {
-        return interaction.reply({
-          content: '⚠️ يرجى استلام التكت',
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      // زر إلغاء الاستلام (Unclaim)
-      if (id === 'tkt_unclaim') {
-        if (isOwner || !staffMember) {
-          return interaction.reply({
-            content: '❌ هذا الزر مخصص للإدارة الصغرى والكبرى فقط.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-        if (!ticket.claimedBy) {
-          return interaction.reply({
-            content: '⚠️ التذكرة غير مستلمة حالياً.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-
-        ticket.claimedBy = null;
-        saveData(data);
-
-        return interaction.reply({
-          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}>.`
-        });
-      }
-
-      // زر طلب إدارة
-      if (id === 'tkt_call_staff') {
-        if (!staffMember && !isOwner) {
-          return interaction.reply({
-            content: '❌ لا تملك صلاحية استخدام هذا الزر.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-        if (ticket.claimedBy) {
-          return interaction.reply({
-            content: `📣 تم استدعاء الإداري المستلم: <@${ticket.claimedBy}> بواسطة <@${interaction.user.id}>.`
-          });
-        } else {
-          const mentions = getCategoryMentions(ticket.categoryKey);
-          return interaction.reply({
-            content: `📣 تم طلب الإدارة بواسطة <@${interaction.user.id}>: ${mentions || 'يرجى متابعة التذكرة'}`
-          });
-        }
-      }
-
-      // زر طلب عضو
-      if (id === 'tkt_call_user') {
-        if (!staffMember) {
-          return interaction.reply({
-            content: '❌ هذا الزر مخصص للإدارة فقط.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-
-        const searchModal = new ModalBuilder()
-          .setCustomId('call_user_search_modal')
-          .setTitle('طلب عضو | بحث بالاسم أو اليوزر');
-
-        const queryInput = new TextInputBuilder()
-          .setCustomId('user_search_query')
-          .setLabel('اكتب حرفين أو أكثر أو الاسم/اليوزر كامل')
-          .setStyle(TextInputStyle.Short)
-          .setMinLength(2)
-          .setRequired(true);
-
-        searchModal.addComponents(new ActionRowBuilder().addComponents(queryInput));
-        return interaction.showModal(searchModal);
-      }
-
-      // زر الإغلاق -> تقييم خلال 12 ثانية
+      // زر الإغلاق -> أي إداري يقدر يغلقه أو صاحب التذكرة
       if (id === 'tkt_close') {
-        if (!staffMember && !isOwner) {
+        if (!staffMember && !isOwner && !isClaimer) {
           return interaction.reply({
             content: '❌ لا تملك صلاحية إغلاق هذه التذكرة.',
             flags: MessageFlags.Ephemeral
@@ -825,13 +723,94 @@ client.on('interactionCreate', async (interaction) => {
 
           await interaction.channel.delete('Ticket closed after rating window').catch(() => null);
         });
+        return;
+      }
+
+      // لو التذكرة مش مستلمة: أي شخص غير إداري أو غير صاحب التذكرة يتمنع
+      if (!ticket.claimedBy && !staffMember && !isOwner) {
+        return interaction.reply({
+          content: '⚠️ يرجى استلام التكت',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // زر إلغاء الاستلام (Unclaim)
+      if (id === 'tkt_unclaim') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        if (!ticket.claimedBy) {
+          return interaction.reply({
+            content: '⚠️ التذكرة غير مستلمة حالياً.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        ticket.claimedBy = null;
+        saveData(data);
+
+        return interaction.reply({
+          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}>.`
+        });
+      }
+
+      // زر طلب إدارة
+      if (id === 'tkt_call_staff') {
+        if (!staffMember && !isOwner) {
+          return interaction.reply({
+            content: '❌ لا تملك صلاحية استخدام هذا الزر.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        if (ticket.claimedBy) {
+          return interaction.reply({
+            content: `📣 تم استدعاء الإداري المستلم: <@${ticket.claimedBy}> بواسطة <@${interaction.user.id}>.`
+          });
+        } else {
+          const mentions = getCategoryMentions(ticket.categoryKey);
+          return interaction.reply({
+            content: `📣 تم طلب الإدارة بواسطة <@${interaction.user.id}>: ${mentions || 'يرجى متابعة التذكرة'}`
+          });
+        }
+      }
+
+      // زر طلب عضو / استدعاء عضو
+      if (id === 'tkt_call_user' || id === 'tkt_summon_user') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const isSummon = id === 'tkt_summon_user';
+        const searchModal = new ModalBuilder()
+          .setCustomId(isSummon ? 'summon_user_search_modal' : 'call_user_search_modal')
+          .setTitle(isSummon ? 'استدعاء عضو | بحث بالاسم أو اليوزر' : 'طلب عضو | بحث بالاسم أو اليوزر');
+
+        const queryInput = new TextInputBuilder()
+          .setCustomId('user_search_query')
+          .setLabel('اكتب حرفين أو أكثر أو الاسم/اليوزر كامل')
+          .setStyle(TextInputStyle.Short)
+          .setMinLength(2)
+          .setRequired(true);
+
+        searchModal.addComponents(new ActionRowBuilder().addComponents(queryInput));
+        return interaction.showModal(searchModal);
       }
     }
   }
 
   // ================= معالجة القوائم المنسدلة =================
-  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('pick_call_user_')) {
-    const ticketChannelId = interaction.customId.replace('pick_call_user_', '');
+  if (
+    interaction.isStringSelectMenu() &&
+    (interaction.customId.startsWith('pick_call_user_') || interaction.customId.startsWith('pick_summon_user_'))
+  ) {
+    const isSummon = interaction.customId.startsWith('pick_summon_user_');
+    const ticketChannelId = interaction.customId.replace(isSummon ? 'pick_summon_user_' : 'pick_call_user_', '');
     const targetUserId = interaction.values[0];
     const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
 
@@ -853,83 +832,37 @@ client.on('interactionCreate', async (interaction) => {
     let dmSent = false;
 
     if (targetUser) {
-      const dmMsg = await targetUser
-        .send(
-          `📩 مرحباً <@${targetUserId}>، تم فتح روم التذكرة لك وتم طلبك بواسطة الإداري <@${interaction.user.id}> في الروم <#${ticketChannel.id}>.`
-        )
-        .catch(() => null);
+      const dmText = isSummon
+        ? `📣 مرحباً <@${targetUserId}>، تم استدعاؤك بواسطة الإداري <@${interaction.user.id}> في روم التذكرة <#${ticketChannel.id}>.`
+        : `📩 مرحباً <@${targetUserId}>، تم فتح روم التذكرة لك وتم طلبك بواسطة الإداري <@${interaction.user.id}> في الروم <#${ticketChannel.id}>.`;
+      const dmMsg = await targetUser.send(dmText).catch(() => null);
       dmSent = Boolean(dmMsg);
     }
 
     if (dmSent) {
       await ticketChannel.send({
-        content: `✅ تم فتح الروم للعضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+        content: isSummon
+          ? `📣 تم استدعاء العضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+          : `✅ تم فتح الروم للعضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
       });
     } else {
       await ticketChannel.send({
         content:
           `⚠️ تم فتح الروم للعضو <@${targetUserId}> ويقدر يدخل يتكلم، ولكن الخاص مقفول لديه ولم تُرسل الرسالة في الخاص.\n` +
-          `📣 <@${targetUserId}> تم طلبك من قبل الإداري <@${interaction.user.id}>.`
+          `📣 <@${targetUserId}> تم ${isSummon ? 'استدعاؤك' : 'طلبك'} من قبل الإداري <@${interaction.user.id}>.`
       });
     }
 
     return interaction.update({
-      content: `✅ تم إضافة <@${targetUserId}> وإتمام الإجراء بنجاح.`,
+      content: `✅ تم ${isSummon ? 'استدعاء' : 'إضافة'} <@${targetUserId}> وإتمام الإجراء بنجاح.`,
       components: []
     });
   }
 
   // ================= معالجة المودالات =================
   if (interaction.isModalSubmit()) {
-    if (interaction.customId === 'media_apply_modal') {
-      const q1 = interaction.fields.getTextInputValue('media_user');
-      const q2 = interaction.fields.getTextInputValue('media_platforms');
-      const q3 = interaction.fields.getTextInputValue('media_followers');
-      const q4 = interaction.fields.getTextInputValue('media_reason');
-      const q5 = interaction.fields.getTextInputValue('media_age_nat');
-
-      if (!CONFIG.mediaChannelId) {
-        return interaction.reply({
-          content: '❌ لم يتم تحديد روم تقديم الميديا (`MEDIA_CHANNEL_ID`).',
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      const mediaCh = await client.channels.fetch(CONFIG.mediaChannelId).catch(() => null);
-      if (!mediaCh) {
-        return interaction.reply({
-          content: '❌ تعذر الوصول إلى روم تقديم الميديا.',
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎥 تقديم جديد على رتبة الميديا | Media Application')
-        .setColor(0x2b2d31)
-        .setThumbnail(interaction.user.displayAvatarURL({ extension: 'png', size: 256 }))
-        .addFields(
-          { name: 'المتقدم', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: false },
-          { name: '1 - يوزر حسابك', value: q1, inline: false },
-          { name: '2 - المنصات', value: q2, inline: false },
-          { name: '3 - عدد المتابعين والمتفاعلين', value: q3, inline: false },
-          { name: '4 - سبب التقديم', value: q4, inline: false },
-          { name: '5 - الجنسية والعمر', value: q5, inline: false }
-        )
-        .setTimestamp();
-
-      const highMentions = CONFIG.highRoles.map((id) => `<@&${id}>`).join(' ');
-      await mediaCh.send({
-        content: highMentions ? `${highMentions}` : undefined,
-        embeds: [embed]
-      });
-
-      return interaction.reply({
-        content: '✅ تم إرسال طلب تقديم الميديا بنجاح إلى روم الميديا.',
-        flags: MessageFlags.Ephemeral
-      });
-    }
-
-    if (interaction.customId === 'call_user_search_modal') {
+    if (interaction.customId === 'call_user_search_modal' || interaction.customId === 'summon_user_search_modal') {
+      const isSummon = interaction.customId === 'summon_user_search_modal';
       const query = interaction.fields.getTextInputValue('user_search_query').trim().toLowerCase();
       await interaction.guild.members.fetch().catch(() => null);
 
@@ -951,8 +884,8 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const select = new StringSelectMenuBuilder()
-        .setCustomId(`pick_call_user_${interaction.channel.id}`)
-        .setPlaceholder('اختر العضو المطلوب من النتائج...')
+        .setCustomId(`${isSummon ? 'pick_summon_user_' : 'pick_call_user_'}${interaction.channel.id}`)
+        .setPlaceholder(isSummon ? 'اختر العضو المراد استدعاؤه...' : 'اختر العضو المطلوب من النتائج...')
         .addOptions(
           matches.map((m) => ({
             label: m.displayName.slice(0, 100),
