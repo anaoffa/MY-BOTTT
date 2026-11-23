@@ -37,6 +37,9 @@ const client = new Client({
 // قفل منع التضارب عند ضغط زر الاستلام في نفس اللحظة
 const claimLocks = new Set();
 
+// مدة الانتظار بين فتح التذاكر في كل الأقسام (دقيقتان)
+const TICKET_COOLDOWN_MS = 2 * 60 * 1000;
+
 // ================= الإعدادات والـ IDs =================
 const parseIds = (val) =>
   (val || '')
@@ -150,6 +153,7 @@ function loadData() {
       tickets: {},
       claimStats: {},
       afkUsers: {},
+      ticketCooldowns: {},
       topBoardMessageId: null,
       buttons: defaultButtons
     };
@@ -161,11 +165,12 @@ function loadData() {
     parsed.tickets = parsed.tickets || {};
     parsed.claimStats = parsed.claimStats || {};
     parsed.afkUsers = parsed.afkUsers || {};
+    parsed.ticketCooldowns = parsed.ticketCooldowns || {};
     parsed.topBoardMessageId = parsed.topBoardMessageId || null;
     parsed.buttons = Object.assign(defaultButtons, parsed.buttons || {});
     return parsed;
   } catch {
-    return { tickets: {}, claimStats: {}, afkUsers: {}, topBoardMessageId: null, buttons: defaultButtons };
+    return { tickets: {}, claimStats: {}, afkUsers: {}, ticketCooldowns: {}, topBoardMessageId: null, buttons: defaultButtons };
   }
 }
 
@@ -475,9 +480,24 @@ client.on('interactionCreate', async (interaction) => {
       const category = CATEGORIES[catKey];
       if (!category) return;
 
+      const preData = loadData();
+      preData.ticketCooldowns = preData.ticketCooldowns || {};
+      const lastOpenedAt = preData.ticketCooldowns[interaction.user.id] || 0;
+      const remainingMs = TICKET_COOLDOWN_MS - (Date.now() - lastOpenedAt);
+
+      if (remainingMs > 0) {
+        return interaction.reply({
+          content: `⏳ لقد فتحت تذكرة مؤخراً. يمكنك فتح تذكرة جديدة في أي قسم بعد **${formatDuration(remainingMs)}**.`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const data = loadData();
+      data.ticketCooldowns = data.ticketCooldowns || {};
+      data.ticketCooldowns[interaction.user.id] = Date.now();
+
       const guild = interaction.guild;
       const member = interaction.member;
 
@@ -549,16 +569,18 @@ client.on('interactionCreate', async (interaction) => {
       saveData(data);
 
       const mentions = getCategoryMentions(catKey);
-      if (mentions) {
-        await channel.send({ content: mentions });
-      }
+      const embedDescription =
+        `أهلاً بك <@${member.id}> في تذكرتك!\n\n` +
+        `${category.body}` +
+        `${mentions ? `\n\n${mentions}` : ''}`;
 
       const ticketEmbed = new EmbedBuilder()
         .setColor(0xf1c40f)
         .setTitle(category.label)
-        .setDescription(`أهلاً بك <@${member.id}> في تذكرتك!\n\n${category.body}`);
+        .setDescription(embedDescription);
 
       await channel.send({
+        content: mentions || undefined,
         embeds: [ticketEmbed],
         components: buildTicketActionRows(data.buttons, null)
       });
