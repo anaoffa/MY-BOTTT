@@ -152,7 +152,7 @@ function buildTicketControlRows(claimedBy = null) {
 
 function buildPanelPayload() {
   const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0xb8860b)
     .setTitle('🎫 SoftMC | Support Center')
     .setDescription(
       [
@@ -307,11 +307,14 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function formatMentionsForHtml(text) {
-  return String(text || '')
-    .replace(/<@!?(\d+)>/g, '<span class="mention">@User($1)</span>')
-    .replace(/<@&(\d+)>/g, '<span class="mention">@Role($1)</span>')
-    .replace(/<#(\d+)>/g, '<span class="mention">#Channel($1)</span>');
+// تحويل المنشنات في النص بعد الهروب إلى تنسيق منشن ديسكورد في الـ HTML
+function formatMentionsForHtml(escapedText) {
+  return String(escapedText || '')
+    .replace(/&lt;@!?(\d+)&gt;/g, '<span class="mention user-mention">@User • $1</span>')
+    .replace(/&lt;@&amp;(\d+)&gt;/g, '<span class="mention role-mention">@Role • $1</span>')
+    .replace(/&lt;#(\d+)&gt;/g, '<span class="mention channel-mention">#Channel • $1</span>')
+    .replace(/@everyone/g, '<span class="mention role-mention">@everyone</span>')
+    .replace(/@here/g, '<span class="mention role-mention">@here</span>');
 }
 
 function buildTranscriptHtml(options = {}) {
@@ -336,10 +339,21 @@ function buildTranscriptHtml(options = {}) {
       const author = escapeHtml(m.author?.tag || m.author?.username || 'Unknown');
       const username = m.author?.username ? ` (@${escapeHtml(m.author.username)})` : '';
       const avatarUrl = m.author?.avatarURL || '';
+
+      const attachmentLinks =
+        m.attachments && m.attachments.size
+          ? Array.from(m.attachments.values())
+              .map((att) => `<div class="attachment"><a href="${escapeHtml(att.url || '')}" target="_blank">📎 ${escapeHtml(att.name || 'مرفق')}</a></div>`)
+              .join('')
+          : '';
+
       const rawContent =
         m.content ||
-        (m.embeds && m.embeds.length ? '[Embed Message]' : m.attachments && m.attachments.size ? '[Attachment]' : '');
-      const formattedBody = formatMentionsForHtml(escapeHtml(rawContent)).replace(/\n/g, '<br>');
+        (m.embeds && m.embeds.length ? '[Embed Message]' : m.attachments && m.attachments.size ? '' : '');
+
+      const formattedBody = rawContent
+        ? formatMentionsForHtml(escapeHtml(rawContent)).replace(/\n/g, '<br>')
+        : '';
 
       return `
         <div class="msg">
@@ -350,7 +364,8 @@ function buildTranscriptHtml(options = {}) {
                 <span class="author">${author}${username}</span>
                 <span class="time">${escapeHtml(ts)}</span>
               </div>
-              <div class="body">${formattedBody}</div>
+              ${formattedBody ? `<div class="body">${formattedBody}</div>` : ''}
+              ${attachmentLinks}
             </div>
           </div>
         </div>
@@ -358,25 +373,38 @@ function buildTranscriptHtml(options = {}) {
     })
     .join('\n');
 
+  const ownerMentionHtml = ownerId ? `<span class="mention user-mention">@User • ${escapeHtml(ownerId)}</span>` : 'غير معروف';
+  const claimerMentionHtml = claimedById
+    ? `<span class="mention user-mention">${escapeHtml(claimedByName)} (${escapeHtml(claimedById)})</span>`
+    : escapeHtml(claimedByName);
+  const closerMentionHtml = closedById ? `<span class="mention user-mention">@User • ${escapeHtml(closedById)}</span>` : 'غير معروف';
+
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <title>${escapeHtml(guildName)} Transcript - ${escapeHtml(channelName)}</title>
   <style>
-    body { font-family: Tahoma, Arial, sans-serif; background: #1e1f22; color: #f2f3f5; padding: 24px; margin: 0; }
-    .header { background: #2b2d31; padding: 18px; border-radius: 10px; margin-bottom: 20px; border-right: 4px solid #5865f2; display: flex; align-items: center; gap: 14px; }
+    body { font-family: Tahoma, Arial, sans-serif; background: #313338; color: #f2f3f5; padding: 24px; margin: 0; }
+    .header { background: #2b2d31; padding: 18px; border-radius: 10px; margin-bottom: 20px; border-right: 4px solid #b8860b; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     .avatar { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; }
-    .msg { background: #2b2d31; padding: 12px 16px; border-radius: 8px; margin-bottom: 10px; }
+    .chat-box { background: #2b2d31; padding: 14px; border-radius: 10px; }
+    .msg { padding: 10px 8px; border-radius: 6px; margin-bottom: 6px; transition: background 0.15s; }
+    .msg:hover { background: #26282c; }
     .msg-row { display: flex; align-items: flex-start; gap: 12px; }
-    .msg-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #383a40; }
+    .msg-avatar { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #383a40; }
     .placeholder { display: flex; align-items: center; justify-content: center; font-size: 18px; }
     .msg-content { flex: 1; min-width: 0; }
-    .meta { font-size: 13px; color: #b5bac1; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .meta { font-size: 13px; color: #b5bac1; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .author { color: #ffffff; font-weight: bold; }
     .time { font-size: 12px; color: #949ba4; }
     .body { font-size: 15px; line-height: 1.55; word-break: break-word; color: #dbdee1; }
-    .mention { background: rgba(88, 101, 242, 0.25); color: #c9cdff; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+    .mention { background: rgba(88, 101, 242, 0.28); color: #dee0fc; padding: 1px 6px; border-radius: 4px; font-size: 13px; font-weight: 500; }
+    .role-mention { background: rgba(184, 134, 11, 0.28); color: #ffe599; }
+    .channel-mention { background: rgba(88, 101, 242, 0.22); color: #c9cdff; }
+    .attachment { margin-top: 6px; }
+    .attachment a { color: #00a8fc; text-decoration: none; font-size: 13px; }
+    .attachment a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -384,11 +412,13 @@ function buildTranscriptHtml(options = {}) {
     ${claimedByAvatar ? `<img class="avatar" src="${escapeHtml(claimedByAvatar)}" alt="Claimer" />` : ''}
     <div>
       <h2 style="margin:0 0 6px 0;">🎫 ${escapeHtml(guildName)} Ticket Transcript — #${escapeHtml(channelName)}</h2>
-      <p style="margin:4px 0;">صاحب التذكرة: ${escapeHtml(ownerId)} | المستلم: ${escapeHtml(claimedByName)} (${escapeHtml(claimedById || 'None')}) | أغلقها: ${escapeHtml(closedById)}</p>
+      <p style="margin:4px 0;">صاحب التذكرة: ${ownerMentionHtml} | المستلم: ${claimerMentionHtml} | أغلقها: ${closerMentionHtml}</p>
       ${ratingText ? `<p style="margin:4px 0;">التقييم: ${escapeHtml(ratingText)} | السبب: ${escapeHtml(reasonText)}</p>` : ''}
     </div>
   </div>
-  ${rowsHtml || '<p>لا توجد رسائل مسجلة في هذه التذكرة.</p>'}
+  <div class="chat-box">
+    ${rowsHtml || '<p>لا توجد رسائل مسجلة في هذه التذكرة.</p>'}
+  </div>
 </body>
 </html>`;
 }
@@ -412,6 +442,16 @@ function getSlashCommands() {
     .setName('applyt')
     .setDescription('إرسال لوحة SoftMC | Support Center الخاصة بالتذاكر')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
+  const afkCmd = new SlashCommandBuilder()
+    .setName('afk')
+    .setDescription('تفعيل وضع AFK وحساب مدة غيابك حتى أول رسالة تكتبها')
+    .addStringOption((opt) =>
+      opt
+        .setName('reason')
+        .setDescription('سبب الغياب (اختياري)')
+        .setRequired(false)
+    );
 
   const ticketBtnCmd = new SlashCommandBuilder()
     .setName('ticket-btn')
@@ -474,7 +514,7 @@ function getSlashCommands() {
         .setRequired(false)
     );
 
-  return [applytCmd.toJSON(), ticketBtnCmd.toJSON(), resetCmd.toJSON()];
+  return [applytCmd.toJSON(), afkCmd.toJSON(), ticketBtnCmd.toJSON(), resetCmd.toJSON()];
 }
 
 async function registerSlashCommands(client) {
