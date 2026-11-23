@@ -321,25 +321,29 @@ async function updateTopClaimsBoard() {
   }
 }
 
-// كل قسم في Embed بلون أصفر غامق ومعاه الزرار بتاعه تحتيه مباشرة
-function buildCategoryMessages() {
-  return Object.values(CATEGORIES).map((cat) => {
-    const embed = new EmbedBuilder()
-      .setColor(0xb8860b)
-      .setDescription(cat.body);
+// قسمين فوق (2 Embeds + 2 أزرار) وأربعة تحت (4 Embeds + 4 أزرار) بلون أصفر
+function buildCategoryMessageGroups() {
+  const allCats = Object.values(CATEGORIES);
+  const groups = [allCats.slice(0, 2), allCats.slice(2)];
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`open_ticket_${cat.key}`)
-        .setLabel(cat.shortLabel)
-        .setEmoji(cat.emoji)
-        .setStyle(cat.style)
+  return groups.map((group) => {
+    const embeds = group.map((cat) =>
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setDescription(cat.body)
     );
 
-    return {
-      embeds: [embed],
-      components: [row]
-    };
+    const components = group.map((cat) =>
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`open_ticket_${cat.key}`)
+          .setLabel(cat.shortLabel)
+          .setEmoji(cat.emoji)
+          .setStyle(cat.style)
+      )
+    );
+
+    return { embeds, components };
   });
 }
 
@@ -439,17 +443,17 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const headerEmbed = new EmbedBuilder()
-        .setColor(0xb8860b)
+        .setColor(0xf1c40f)
         .setTitle('SoftMC | Support Center');
 
       await interaction.channel.send({ embeds: [headerEmbed] });
-      const categoryMsgs = buildCategoryMessages();
-      for (const msg of categoryMsgs) {
-        await interaction.channel.send(msg);
+      const messageGroups = buildCategoryMessageGroups();
+      for (const msgPayload of messageGroups) {
+        await interaction.channel.send(msgPayload);
       }
 
       return interaction.reply({
-        content: '✅ تم إرسال لوحة **SoftMC | Support Center** وكل قسم في Embed أصفر غامق ومعاه الزرار بتاعه.',
+        content: '✅ تم إرسال لوحة **SoftMC | Support Center** (قسمين فوق وأربعة تحت) بلون أصفر مع أزرارها.',
         flags: MessageFlags.Ephemeral
       });
     }
