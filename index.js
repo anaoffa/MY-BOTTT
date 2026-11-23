@@ -19,7 +19,6 @@ const fs = require('fs');
 const path = require('path');
 const {
   buildTranscriptHtml,
-  sendConfigLog,
   registerSlashCommands,
   handleConfigSlashCommand
 } = require('./utils');
@@ -150,6 +149,7 @@ function loadData() {
     const initial = {
       tickets: {},
       claimStats: {},
+      afkUsers: {},
       topBoardMessageId: null,
       buttons: defaultButtons
     };
@@ -160,16 +160,33 @@ function loadData() {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     parsed.tickets = parsed.tickets || {};
     parsed.claimStats = parsed.claimStats || {};
+    parsed.afkUsers = parsed.afkUsers || {};
     parsed.topBoardMessageId = parsed.topBoardMessageId || null;
     parsed.buttons = Object.assign(defaultButtons, parsed.buttons || {});
     return parsed;
   } catch {
-    return { tickets: {}, claimStats: {}, topBoardMessageId: null, buttons: defaultButtons };
+    return { tickets: {}, claimStats: {}, afkUsers: {}, topBoardMessageId: null, buttons: defaultButtons };
   }
 }
 
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts = [];
+  if (days > 0) parts.push(`${days} يوم`);
+  if (hours > 0) parts.push(`${hours} ساعة`);
+  if (minutes > 0) parts.push(`${minutes} دقيقة`);
+  parts.push(`${seconds} ثانية`);
+
+  return parts.join(' و ');
 }
 
 function mapStyle(styleName) {
@@ -304,9 +321,13 @@ async function updateTopClaimsBoard() {
   }
 }
 
-// كل قسم ومعاه الزرار بتاعه تحتيه مباشرة
+// كل قسم في Embed بلون أصفر غامق ومعاه الزرار بتاعه تحتيه مباشرة
 function buildCategoryMessages() {
   return Object.values(CATEGORIES).map((cat) => {
+    const embed = new EmbedBuilder()
+      .setColor(0xb8860b)
+      .setDescription(cat.body);
+
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`open_ticket_${cat.key}`)
@@ -316,7 +337,7 @@ function buildCategoryMessages() {
     );
 
     return {
-      content: `${cat.body}\n────────────────────`,
+      embeds: [embed],
       components: [row]
     };
   });
@@ -372,9 +393,43 @@ client.once('ready', async () => {
   await updateTopClaimsBoard();
 });
 
+// ================= نظام AFK عند الكتابة في الشات =================
+client.on('messageCreate', async (message) => {
+  if (!message.guild || message.author.bot) return;
+
+  const data = loadData();
+  data.afkUsers = data.afkUsers || {};
+  const afkEntry = data.afkUsers[message.author.id];
+
+  if (afkEntry) {
+    const durationText = formatDuration(Date.now() - afkEntry.since);
+    delete data.afkUsers[message.author.id];
+    saveData(data);
+
+    await message.reply({
+      content: `👋 أهلاً بعودتك <@${message.author.id}>! تم إنهاء وضع **AFK** — إجمالي مدة غيابك: **${durationText}**.`
+    }).catch(() => null);
+  }
+});
+
 // ================= معالجة أوامر السلاش =================
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'afk') {
+      const reason = interaction.options.getString('reason') || 'غير محدد';
+      const data = loadData();
+      data.afkUsers = data.afkUsers || {};
+      data.afkUsers[interaction.user.id] = {
+        since: Date.now(),
+        reason
+      };
+      saveData(data);
+
+      return interaction.reply({
+        content: `💤 تم تفعيل وضع **AFK** لـ <@${interaction.user.id}>${reason !== 'غير محدد' ? ` — السبب: **${reason}**` : ''}. سيتم حساب الوقت وإظهار نتيجته أول ما تكتب رسالة.`
+      });
+    }
+
     if (interaction.commandName === 'applyt') {
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
@@ -383,14 +438,18 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      await interaction.channel.send({ content: '# SoftMC | Support Center' });
+      const headerEmbed = new EmbedBuilder()
+        .setColor(0xb8860b)
+        .setTitle('SoftMC | Support Center');
+
+      await interaction.channel.send({ embeds: [headerEmbed] });
       const categoryMsgs = buildCategoryMessages();
       for (const msg of categoryMsgs) {
         await interaction.channel.send(msg);
       }
 
       return interaction.reply({
-        content: '✅ تم إرسال لوحة **SoftMC | Support Center** وكل قسم ومعاه الزرار بتاعه.',
+        content: '✅ تم إرسال لوحة **SoftMC | Support Center** وكل قسم في Embed أصفر غامق ومعاه الزرار بتاعه.',
         flags: MessageFlags.Ephemeral
       });
     }
