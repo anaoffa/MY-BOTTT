@@ -437,21 +437,28 @@ async function generateHtmlTranscript(channel, meta = {}) {
   });
 }
 
+function buildAfkSlashCommand(name, description) {
+  return new SlashCommandBuilder()
+    .setName(name)
+    .setDescription(description)
+    .addStringOption((opt) =>
+      opt
+        .setName('reason')
+        .setDescription('اكتب أي نص أو سبب مخصص (اختياري)')
+        .setRequired(false)
+    );
+}
+
 function getSlashCommands() {
   const applytCmd = new SlashCommandBuilder()
     .setName('applyt')
     .setDescription('إرسال لوحة SoftMC | Support Center الخاصة بالتذاكر')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-  const afkCmd = new SlashCommandBuilder()
-    .setName('afk')
-    .setDescription('تفعيل وضع AFK وحساب مدة غيابك حتى أول رسالة تكتبها')
-    .addStringOption((opt) =>
-      opt
-        .setName('reason')
-        .setDescription('سبب الغياب (اختياري)')
-        .setRequired(false)
-    );
+  const afkCmd = buildAfkSlashCommand('afk', 'تفعيل وضع AFK وحساب مدة غيابك حتى أول رسالة تكتبها');
+  const afk1Cmd = buildAfkSlashCommand('afk1', 'اختصار 1 لوضع AFK (مشغول حالياً — أو اكتب نصك)');
+  const afk2Cmd = buildAfkSlashCommand('afk2', 'اختصار 2 لوضع AFK (راجع بعد شوية — أو اكتب نصك)');
+  const afk3Cmd = buildAfkSlashCommand('afk3', 'اختصار 3 لوضع AFK (خارج الجهاز — أو اكتب نصك)');
 
   const ticketBtnCmd = new SlashCommandBuilder()
     .setName('ticket-btn')
@@ -514,7 +521,15 @@ function getSlashCommands() {
         .setRequired(false)
     );
 
-  return [applytCmd.toJSON(), afkCmd.toJSON(), ticketBtnCmd.toJSON(), resetCmd.toJSON()];
+  return [
+    applytCmd.toJSON(),
+    afkCmd.toJSON(),
+    afk1Cmd.toJSON(),
+    afk2Cmd.toJSON(),
+    afk3Cmd.toJSON(),
+    ticketBtnCmd.toJSON(),
+    resetCmd.toJSON()
+  ];
 }
 
 async function registerSlashCommands(client) {
