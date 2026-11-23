@@ -40,6 +40,14 @@ const claimLocks = new Set();
 // مدة الانتظار بين فتح التذاكر في كل الأقسام (دقيقتان)
 const TICKET_COOLDOWN_MS = 2 * 60 * 1000;
 
+// نصوص افتراضية لأمر /afk والـ 3 اختصارات
+const AFK_SHORTCUT_DEFAULTS = {
+  afk: 'غير محدد',
+  afk1: 'مشغول حالياً',
+  afk2: 'راجع بعد شوية',
+  afk3: 'خارج الجهاز'
+};
+
 // ================= الإعدادات والـ IDs =================
 const parseIds = (val) =>
   (val || '')
@@ -273,6 +281,25 @@ function getCategoryMentions(categoryKey) {
   return '';
 }
 
+async function activateAfk(interaction, defaultReason = 'غير محدد') {
+  const customReason = interaction.options.getString('reason');
+  const reason = customReason && customReason.trim().length > 0
+    ? customReason.trim()
+    : defaultReason;
+
+  const data = loadData();
+  data.afkUsers = data.afkUsers || {};
+  data.afkUsers[interaction.user.id] = {
+    since: Date.now(),
+    reason
+  };
+  saveData(data);
+
+  return interaction.reply({
+    content: `💤 تم تفعيل وضع **AFK** لـ <@${interaction.user.id}>${reason !== 'غير محدد' ? ` — السبب: **${reason}**` : ''}. سيتم حساب الوقت وإظهار نتيجته أول ما تكتب رسالة.`
+  });
+}
+
 // ================= لوحة توب 5 مستلمين التكتات =================
 function buildTopClaimsPayload(data) {
   const entries = Object.entries(data.claimStats || {})
@@ -416,19 +443,8 @@ client.on('messageCreate', async (message) => {
 // ================= معالجة أوامر السلاش =================
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === 'afk') {
-      const reason = interaction.options.getString('reason') || 'غير محدد';
-      const data = loadData();
-      data.afkUsers = data.afkUsers || {};
-      data.afkUsers[interaction.user.id] = {
-        since: Date.now(),
-        reason
-      };
-      saveData(data);
-
-      return interaction.reply({
-        content: `💤 تم تفعيل وضع **AFK** لـ <@${interaction.user.id}>${reason !== 'غير محدد' ? ` — السبب: **${reason}**` : ''}. سيتم حساب الوقت وإظهار نتيجته أول ما تكتب رسالة.`
-      });
+    if (Object.prototype.hasOwnProperty.call(AFK_SHORTCUT_DEFAULTS, interaction.commandName)) {
+      return activateAfk(interaction, AFK_SHORTCUT_DEFAULTS[interaction.commandName]);
     }
 
     if (interaction.commandName === 'applyt') {
