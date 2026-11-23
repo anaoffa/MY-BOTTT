@@ -23,12 +23,12 @@ const STATS_FILE = path.join(DATA_DIR, 'stats.json');
 
 const DEFAULT_CONFIG = {
   buttons: {
-    claim: { style: 'Success', roleId: null, label: 'استلام التذكرة', emoji: '✋' },
+    claim: { style: 'Success', roleId: null, label: 'استلام', emoji: '✋' },
     unclaim: { style: 'Secondary', roleId: null, label: 'إلغاء الاستلام', emoji: '↩️' },
     call_staff: { style: 'Primary', roleId: null, label: 'طلب إدارة', emoji: '🔔' },
     call_user: { style: 'Primary', roleId: null, label: 'طلب عضو', emoji: '📩' },
     summon_user: { style: 'Secondary', roleId: null, label: 'استدعاء عضو', emoji: '📣' },
-    close: { style: 'Danger', roleId: null, label: 'إغلاق التذكرة', emoji: '🔒' }
+    close: { style: 'Danger', roleId: null, label: 'إغلاق', emoji: '🔒' }
   },
   topClaimsMessageId: null
 };
@@ -108,7 +108,7 @@ function buildTicketControlRows(claimedBy = null) {
 
   const claimBtn = new ButtonBuilder()
     .setCustomId('tkt_claim')
-    .setLabel(btns.claim.label || 'استلام')
+    .setLabel(claimedBy ? 'مستلمة' : (btns.claim.label || 'استلام'))
     .setEmoji(btns.claim.emoji || '✋')
     .setStyle(getButtonStyle(btns.claim.style))
     .setDisabled(Boolean(claimedBy));
@@ -307,6 +307,13 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function formatMentionsForHtml(text) {
+  return String(text || '')
+    .replace(/<@!?(\d+)>/g, '<span class="mention">@User($1)</span>')
+    .replace(/<@&(\d+)>/g, '<span class="mention">@Role($1)</span>')
+    .replace(/<#(\d+)>/g, '<span class="mention">#Channel($1)</span>');
+}
+
 function buildTranscriptHtml(options = {}) {
   const {
     guildName = 'SoftMC',
@@ -327,14 +334,25 @@ function buildTranscriptHtml(options = {}) {
     .map((m) => {
       const ts = m.createdTimestamp ? new Date(m.createdTimestamp).toLocaleString('ar-EG') : '';
       const author = escapeHtml(m.author?.tag || m.author?.username || 'Unknown');
+      const username = m.author?.username ? ` (@${escapeHtml(m.author.username)})` : '';
+      const avatarUrl = m.author?.avatarURL || '';
       const rawContent =
         m.content ||
         (m.embeds && m.embeds.length ? '[Embed Message]' : m.attachments && m.attachments.size ? '[Attachment]' : '');
-      const content = escapeHtml(rawContent);
+      const formattedBody = formatMentionsForHtml(escapeHtml(rawContent)).replace(/\n/g, '<br>');
+
       return `
         <div class="msg">
-          <div class="meta"><span class="author">${author}</span> <span class="time">${escapeHtml(ts)}</span></div>
-          <div class="body">${content.replace(/\n/g, '<br>')}</div>
+          <div class="msg-row">
+            ${avatarUrl ? `<img class="msg-avatar" src="${escapeHtml(avatarUrl)}" alt="${author}" />` : '<div class="msg-avatar placeholder">👤</div>'}
+            <div class="msg-content">
+              <div class="meta">
+                <span class="author">${author}${username}</span>
+                <span class="time">${escapeHtml(ts)}</span>
+              </div>
+              <div class="body">${formattedBody}</div>
+            </div>
+          </div>
         </div>
       `;
     })
@@ -346,22 +364,28 @@ function buildTranscriptHtml(options = {}) {
   <meta charset="UTF-8" />
   <title>${escapeHtml(guildName)} Transcript - ${escapeHtml(channelName)}</title>
   <style>
-    body { font-family: Tahoma, Arial, sans-serif; background: #1e1f22; color: #f2f3f5; padding: 24px; }
-    .header { background: #2b2d31; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-right: 4px solid #5865f2; display: flex; align-items: center; gap: 14px; }
-    .avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
-    .msg { background: #2b2d31; padding: 12px 16px; border-radius: 6px; margin-bottom: 10px; }
-    .meta { font-size: 13px; color: #b5bac1; margin-bottom: 6px; }
-    .author { color: #ffffff; font-weight: bold; margin-left: 8px; }
-    .body { font-size: 15px; line-height: 1.5; word-break: break-word; }
+    body { font-family: Tahoma, Arial, sans-serif; background: #1e1f22; color: #f2f3f5; padding: 24px; margin: 0; }
+    .header { background: #2b2d31; padding: 18px; border-radius: 10px; margin-bottom: 20px; border-right: 4px solid #5865f2; display: flex; align-items: center; gap: 14px; }
+    .avatar { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; }
+    .msg { background: #2b2d31; padding: 12px 16px; border-radius: 8px; margin-bottom: 10px; }
+    .msg-row { display: flex; align-items: flex-start; gap: 12px; }
+    .msg-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #383a40; }
+    .placeholder { display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .msg-content { flex: 1; min-width: 0; }
+    .meta { font-size: 13px; color: #b5bac1; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .author { color: #ffffff; font-weight: bold; }
+    .time { font-size: 12px; color: #949ba4; }
+    .body { font-size: 15px; line-height: 1.55; word-break: break-word; color: #dbdee1; }
+    .mention { background: rgba(88, 101, 242, 0.25); color: #c9cdff; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
   </style>
 </head>
 <body>
   <div class="header">
     ${claimedByAvatar ? `<img class="avatar" src="${escapeHtml(claimedByAvatar)}" alt="Claimer" />` : ''}
     <div>
-      <h2>🎫 ${escapeHtml(guildName)} Ticket Transcript — #${escapeHtml(channelName)}</h2>
-      <p>صاحب التذكرة: ${escapeHtml(ownerId)} | المستلم: ${escapeHtml(claimedByName)} (${escapeHtml(claimedById || 'None')}) | أغلقها: ${escapeHtml(closedById)}</p>
-      ${ratingText ? `<p>التقييم: ${escapeHtml(ratingText)} | السبب: ${escapeHtml(reasonText)}</p>` : ''}
+      <h2 style="margin:0 0 6px 0;">🎫 ${escapeHtml(guildName)} Ticket Transcript — #${escapeHtml(channelName)}</h2>
+      <p style="margin:4px 0;">صاحب التذكرة: ${escapeHtml(ownerId)} | المستلم: ${escapeHtml(claimedByName)} (${escapeHtml(claimedById || 'None')}) | أغلقها: ${escapeHtml(closedById)}</p>
+      ${ratingText ? `<p style="margin:4px 0;">التقييم: ${escapeHtml(ratingText)} | السبب: ${escapeHtml(reasonText)}</p>` : ''}
     </div>
   </div>
   ${rowsHtml || '<p>لا توجد رسائل مسجلة في هذه التذكرة.</p>'}
