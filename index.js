@@ -321,57 +321,22 @@ async function updateTopClaimsBoard() {
   }
 }
 
-// قسمين فوق (زرين جنب بعض في صف واحد) وأربعة تحت (صفين، كل صف فيه زرين جنب بعض) بلون أصفر
-function buildCategoryMessageGroups() {
-  const allCats = Object.values(CATEGORIES);
-  const topGroup = allCats.slice(0, 2);
-  const bottomGroup = allCats.slice(2);
-
-  const topPayload = {
-    embeds: topGroup.map((cat) =>
-      new EmbedBuilder()
-        .setColor(0xf1c40f)
-        .setDescription(cat.body)
-    ),
-    components: [
-      new ActionRowBuilder().addComponents(
-        topGroup.map((cat) =>
-          new ButtonBuilder()
-            .setCustomId(`open_ticket_${cat.key}`)
-            .setLabel(cat.shortLabel)
-            .setEmoji(cat.emoji)
-            .setStyle(cat.style)
-        )
-      )
-    ]
-  };
-
-  const bottomRows = [];
-  for (let i = 0; i < bottomGroup.length; i += 2) {
-    const pair = bottomGroup.slice(i, i + 2);
-    bottomRows.push(
-      new ActionRowBuilder().addComponents(
-        pair.map((cat) =>
-          new ButtonBuilder()
-            .setCustomId(`open_ticket_${cat.key}`)
-            .setLabel(cat.shortLabel)
-            .setEmoji(cat.emoji)
-            .setStyle(cat.style)
-        )
-      )
+// كل قسم في رسالة نصية عادية (مش Embed) ومعاه الزرار بتاعه تحتيه مباشرة
+function buildCategoryMessages() {
+  return Object.values(CATEGORIES).map((cat) => {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`open_ticket_${cat.key}`)
+        .setLabel(cat.shortLabel)
+        .setEmoji(cat.emoji)
+        .setStyle(cat.style)
     );
-  }
 
-  const bottomPayload = {
-    embeds: bottomGroup.map((cat) =>
-      new EmbedBuilder()
-        .setColor(0xf1c40f)
-        .setDescription(cat.body)
-    ),
-    components: bottomRows
-  };
-
-  return [topPayload, bottomPayload];
+    return {
+      content: cat.body,
+      components: [row]
+    };
+  });
 }
 
 function buildTicketActionRows(buttonSettings, claimedBy = null) {
@@ -469,18 +434,17 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      const headerEmbed = new EmbedBuilder()
-        .setColor(0xf1c40f)
-        .setTitle('SoftMC | Support Center');
+      await interaction.channel.send({
+        content: '# SoftMC | Support Center'
+      });
 
-      await interaction.channel.send({ embeds: [headerEmbed] });
-      const messageGroups = buildCategoryMessageGroups();
-      for (const msgPayload of messageGroups) {
-        await interaction.channel.send(msgPayload);
+      const categoryMsgs = buildCategoryMessages();
+      for (const msg of categoryMsgs) {
+        await interaction.channel.send(msg);
       }
 
       return interaction.reply({
-        content: '✅ تم إرسال لوحة **SoftMC | Support Center** (قسمين فوق وأربعة تحت) بلون أصفر مع أزرارها.',
+        content: '✅ تم إرسال لوحة **SoftMC | Support Center** بالشكل الأصلي (كل قسم رسالة نصية ومعاه الزرار بتاعه).',
         flags: MessageFlags.Ephemeral
       });
     }
@@ -585,13 +549,17 @@ client.on('interactionCreate', async (interaction) => {
       saveData(data);
 
       const mentions = getCategoryMentions(catKey);
-      const welcomeText =
-        `${mentions ? `${mentions}\n` : ''}` +
-        `أهلاً بك <@${member.id}> في تذكرتك!\n\n` +
-        `${category.body}`;
+      if (mentions) {
+        await channel.send({ content: mentions });
+      }
+
+      const ticketEmbed = new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle(category.label)
+        .setDescription(`أهلاً بك <@${member.id}> في تذكرتك!\n\n${category.body}`);
 
       await channel.send({
-        content: welcomeText,
+        embeds: [ticketEmbed],
         components: buildTicketActionRows(data.buttons, null)
       });
 
