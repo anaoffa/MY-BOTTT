@@ -35,6 +35,9 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
+// قفل منع التضارب عند ضغط زر الاستلام في نفس اللحظة
+const claimLocks = new Set();
+
 // ================= الإعدادات والـ IDs =================
 const parseIds = (val) =>
   (val || '')
@@ -196,7 +199,7 @@ function isHighStaff(member) {
   return hasAnyRole(member, CONFIG.highRoles);
 }
 
-// قراءة أن الشخص إداري دون الاعتماد الصارم على IDs محددة فقط
+// قراءة إن كان العضو إدارياً بدون الاعتماد الصارم على IDs محددة فقط
 function isAnyStaff(member, ticket = null) {
   if (!member) return false;
   if (ticket && ticket.claimedBy && member.id === ticket.claimedBy) return true;
@@ -319,7 +322,7 @@ function buildCategoryMessages() {
   });
 }
 
-function buildTicketActionRows(buttonSettings) {
+function buildTicketActionRows(buttonSettings, claimedBy = null) {
   const claimCfg = buttonSettings.claim || { style: 'Primary' };
   const unclaimCfg = buttonSettings.unclaim || { style: 'Secondary' };
   const callStaffCfg = buttonSettings.call_staff || { style: 'Secondary' };
@@ -330,12 +333,14 @@ function buildTicketActionRows(buttonSettings) {
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('tkt_claim')
-      .setLabel('استلام')
-      .setStyle(mapStyle(claimCfg.style)),
+      .setLabel(claimedBy ? 'مستلمة' : 'استلام')
+      .setStyle(mapStyle(claimCfg.style))
+      .setDisabled(Boolean(claimedBy)),
     new ButtonBuilder()
       .setCustomId('tkt_unclaim')
       .setLabel('إلغاء الاستلام')
-      .setStyle(mapStyle(unclaimCfg.style)),
+      .setStyle(mapStyle(unclaimCfg.style))
+      .setDisabled(!claimedBy),
     new ButtonBuilder()
       .setCustomId('tkt_call_staff')
       .setLabel('طلب إدارة')
@@ -497,7 +502,7 @@ client.on('interactionCreate', async (interaction) => {
 
       await channel.send({
         content: welcomeText,
-        components: buildTicketActionRows(data.buttons)
+        components: buildTicketActionRows(data.buttons, null)
       });
 
       return interaction.editReply({
@@ -530,7 +535,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // زر الاستلام (Claim)
+      // زر الاستلام (Claim) مع منع التضارب وحساب النقاط لأول مستلم فقط
       if (id === 'tkt_claim') {
         if (!staffMember) {
           return interaction.reply({
@@ -538,38 +543,67 @@ client.on('interactionCreate', async (interaction) => {
             flags: MessageFlags.Ephemeral
           });
         }
-        if (ticket.claimedBy) {
+
+        const lockKey = interaction.channel.id;
+        if (claimLocks.has(lockKey)) {
           return interaction.reply({
-            content: `❌ التذكرة مستلمة بالفعل بواسطة <@${ticket.claimedBy}> ولا يمكن لأحد آخر استلامها.`,
+            content: '⏳ جاري معالجة استلام التذكرة بواسطة شخص آخر الآن...',
             flags: MessageFlags.Ephemeral
           });
         }
 
-        ticket.claimedHistory = ticket.claimedHistory || [];
-        const previousClaimers = ticket.claimedHistory.filter((uid) => uid !== interaction.user.id);
-        const alreadyClaimedBySameUser = ticket.claimedHistory.includes(interaction.user.id);
+        claimLocks.add(lockKey);
+        try {
+          const freshData = loadData();
+          const freshTicket = freshData.tickets[interaction.channel.id];
+          if (!freshTicket) {
+            return interaction.reply({
+              content: '❌ التذكرة غير متاحة.',
+              flags: MessageFlags.Ephemeral
+            });
+          }
 
-        ticket.claimedBy = interaction.user.id;
+          if (freshTicket.claimedBy) {
+            return interaction.reply({
+              content: `❌ التذكرة مستلمة بالفعل بواسطة <@${freshTicket.claimedBy}> ولا يمكن لأحد آخر استلامها.`,
+              flags: MessageFlags.Ephemeral
+            });
+          }
 
-        if (!alreadyClaimedBySameUser) {
-          ticket.claimedHistory.push(interaction.user.id);
-          data.claimStats[interaction.user.id] = (data.claimStats[interaction.user.id] || 0) + 1;
+          freshTicket.claimedHistory = freshTicket.claimedHistory || [];
+          const previousClaimers = freshTicket.claimedHistory.filter((uid) => uid !== interaction.user.id);
+          const alreadyClaimedBySameUser = freshTicket.claimedHistory.includes(interaction.user.id);
+
+          freshTicket.claimedBy = interaction.user.id;
+
+          if (!alreadyClaimedBySameUser) {
+            freshTicket.claimedHistory.push(interaction.user.id);
+            freshData.claimStats[interaction.user.id] = (freshData.claimStats[interaction.user.id] || 0) + 1;
+          }
+
+          saveData(freshData);
+          await updateTopClaimsBoard();
+
+          if (interaction.message && interaction.message.editable) {
+            await interaction.message.edit({
+              components: buildTicketActionRows(freshData.buttons, freshTicket.claimedBy)
+            }).catch(() => null);
+          }
+
+          const userTotal = freshData.claimStats[interaction.user.id] || 0;
+          let replyMsg = `✅ تم استلام التذكرة بواسطة <@${interaction.user.id}> (إجمالي استلاماته: **${userTotal}**).`;
+
+          if (alreadyClaimedBySameUser) {
+            replyMsg = `✅ تم استلام التذكرة بواسطة <@${interaction.user.id}> (تم احتساب التكت لك مسبقاً في أول استلام — رصيدك: **${userTotal}**).`;
+          } else if (previousClaimers.length > 0) {
+            const prevMentions = previousClaimers.map((uid) => `<@${uid}>`).join('، ');
+            replyMsg += `\nℹ️ ملحوظة: تم احتساب التكت أيضاً للإداري السابق (${prevMentions}).`;
+          }
+
+          return interaction.reply({ content: replyMsg });
+        } finally {
+          claimLocks.delete(lockKey);
         }
-
-        saveData(data);
-        await updateTopClaimsBoard();
-
-        const userTotal = data.claimStats[interaction.user.id] || 0;
-        let replyMsg = `✅ تم استلام التذكرة بواسطة <@${interaction.user.id}> (إجمالي استلاماته: **${userTotal}**).`;
-
-        if (alreadyClaimedBySameUser) {
-          replyMsg = `✅ تم استلام التذكرة بواسطة <@${interaction.user.id}> (تم احتساب التكت لك مسبقاً في أول استلام — رصيدك: **${userTotal}**).`;
-        } else if (previousClaimers.length > 0) {
-          const prevMentions = previousClaimers.map((uid) => `<@${uid}>`).join('، ');
-          replyMsg += `\nℹ️ ملحوظة: تم احتساب التكت أيضاً للإداري السابق (${prevMentions}).`;
-        }
-
-        return interaction.reply({ content: replyMsg });
       }
 
       // زر الإغلاق -> أي إداري يقدر يغلقه أو صاحب التذكرة
@@ -678,6 +712,18 @@ client.on('interactionCreate', async (interaction) => {
           }
           allMessages.reverse();
 
+          const enrichedMessages = allMessages.map((m) => ({
+            createdTimestamp: m.createdTimestamp,
+            content: m.content,
+            embeds: m.embeds,
+            attachments: m.attachments,
+            author: {
+              tag: m.member?.displayName || m.author?.globalName || m.author?.tag || m.author?.username || 'Unknown',
+              username: m.author?.username || '',
+              avatarURL: m.author?.displayAvatarURL({ extension: 'png', size: 128 }) || ''
+            }
+          }));
+
           const claimedMember = currentTicket.claimedBy
             ? await interaction.guild.members.fetch(currentTicket.claimedBy).catch(() => null)
             : null;
@@ -687,12 +733,12 @@ client.on('interactionCreate', async (interaction) => {
             channelName: interaction.channel.name,
             ownerId: currentTicket.ownerId,
             claimedById: currentTicket.claimedBy,
-            claimedByName: claimedMember?.user?.tag || (currentTicket.claimedBy ? currentTicket.claimedBy : 'غير مستلمة'),
+            claimedByName: claimedMember?.displayName || claimedMember?.user?.tag || (currentTicket.claimedBy ? currentTicket.claimedBy : 'غير مستلمة'),
             claimedByAvatar: claimedMember?.user?.displayAvatarURL({ extension: 'png', size: 128 }) || '',
             closedById,
             ratingText: finalStarsText,
             reasonText: finalReasonText,
-            messages: allMessages
+            messages: enrichedMessages
           });
 
           if (CONFIG.ticketLogChannelId) {
@@ -726,6 +772,40 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      // زر استدعاء عضو -> يستدعي صاحب التذكرة تلقائياً بدون كتابة اسم
+      if (id === 'tkt_summon_user') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const ownerId = ticket.ownerId;
+        await interaction.channel.permissionOverwrites.edit(ownerId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true
+        }).catch(() => null);
+
+        const targetUser = await client.users.fetch(ownerId).catch(() => null);
+        let dmSent = false;
+
+        if (targetUser) {
+          const dmMsg = await targetUser
+            .send(`📣 تم استدعاؤك بواسطة الإداري <@${interaction.user.id}> في تذكرتك <#${interaction.channel.id}>.`)
+            .catch(() => null);
+          dmSent = Boolean(dmMsg);
+        }
+
+        return interaction.reply({
+          content: dmSent
+            ? `📣 تم استدعاء صاحب التذكرة <@${ownerId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+            : `📣 تم استدعاء صاحب التذكرة <@${ownerId}> بواسطة <@${interaction.user.id}> (الخاص مقفول لديه).`
+        });
+      }
+
       // لو التذكرة مش مستلمة: أي شخص غير إداري أو غير صاحب التذكرة يتمنع
       if (!ticket.claimedBy && !staffMember && !isOwner) {
         return interaction.reply({
@@ -752,8 +832,14 @@ client.on('interactionCreate', async (interaction) => {
         ticket.claimedBy = null;
         saveData(data);
 
+        if (interaction.message && interaction.message.editable) {
+          await interaction.message.edit({
+            components: buildTicketActionRows(data.buttons, null)
+          }).catch(() => null);
+        }
+
         return interaction.reply({
-          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}>.`
+          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}> وأصبح الاستلام متاحاً من جديد.`
         });
       }
 
@@ -777,8 +863,8 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      // زر طلب عضو / استدعاء عضو
-      if (id === 'tkt_call_user' || id === 'tkt_summon_user') {
+      // زر طلب عضو (بحث بالاسم أو اليوزر)
+      if (id === 'tkt_call_user') {
         if (!staffMember && !isClaimer) {
           return interaction.reply({
             content: '❌ هذا الزر مخصص للإدارة فقط.',
@@ -786,10 +872,9 @@ client.on('interactionCreate', async (interaction) => {
           });
         }
 
-        const isSummon = id === 'tkt_summon_user';
         const searchModal = new ModalBuilder()
-          .setCustomId(isSummon ? 'summon_user_search_modal' : 'call_user_search_modal')
-          .setTitle(isSummon ? 'استدعاء عضو | بحث بالاسم أو اليوزر' : 'طلب عضو | بحث بالاسم أو اليوزر');
+          .setCustomId('call_user_search_modal')
+          .setTitle('طلب عضو | بحث بالاسم أو اليوزر');
 
         const queryInput = new TextInputBuilder()
           .setCustomId('user_search_query')
@@ -805,12 +890,8 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   // ================= معالجة القوائم المنسدلة =================
-  if (
-    interaction.isStringSelectMenu() &&
-    (interaction.customId.startsWith('pick_call_user_') || interaction.customId.startsWith('pick_summon_user_'))
-  ) {
-    const isSummon = interaction.customId.startsWith('pick_summon_user_');
-    const ticketChannelId = interaction.customId.replace(isSummon ? 'pick_summon_user_' : 'pick_call_user_', '');
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('pick_call_user_')) {
+    const ticketChannelId = interaction.customId.replace('pick_call_user_', '');
     const targetUserId = interaction.values[0];
     const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
 
@@ -832,37 +913,35 @@ client.on('interactionCreate', async (interaction) => {
     let dmSent = false;
 
     if (targetUser) {
-      const dmText = isSummon
-        ? `📣 مرحباً <@${targetUserId}>، تم استدعاؤك بواسطة الإداري <@${interaction.user.id}> في روم التذكرة <#${ticketChannel.id}>.`
-        : `📩 مرحباً <@${targetUserId}>، تم فتح روم التذكرة لك وتم طلبك بواسطة الإداري <@${interaction.user.id}> في الروم <#${ticketChannel.id}>.`;
-      const dmMsg = await targetUser.send(dmText).catch(() => null);
+      const dmMsg = await targetUser
+        .send(
+          `📩 مرحباً <@${targetUserId}>، تم فتح روم التذكرة لك وتم طلبك بواسطة الإداري <@${interaction.user.id}> في الروم <#${ticketChannel.id}>.`
+        )
+        .catch(() => null);
       dmSent = Boolean(dmMsg);
     }
 
     if (dmSent) {
       await ticketChannel.send({
-        content: isSummon
-          ? `📣 تم استدعاء العضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
-          : `✅ تم فتح الروم للعضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+        content: `✅ تم فتح الروم للعضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
       });
     } else {
       await ticketChannel.send({
         content:
           `⚠️ تم فتح الروم للعضو <@${targetUserId}> ويقدر يدخل يتكلم، ولكن الخاص مقفول لديه ولم تُرسل الرسالة في الخاص.\n` +
-          `📣 <@${targetUserId}> تم ${isSummon ? 'استدعاؤك' : 'طلبك'} من قبل الإداري <@${interaction.user.id}>.`
+          `📣 <@${targetUserId}> تم طلبك من قبل الإداري <@${interaction.user.id}>.`
       });
     }
 
     return interaction.update({
-      content: `✅ تم ${isSummon ? 'استدعاء' : 'إضافة'} <@${targetUserId}> وإتمام الإجراء بنجاح.`,
+      content: `✅ تم إضافة <@${targetUserId}> وإتمام الإجراء بنجاح.`,
       components: []
     });
   }
 
   // ================= معالجة المودالات =================
   if (interaction.isModalSubmit()) {
-    if (interaction.customId === 'call_user_search_modal' || interaction.customId === 'summon_user_search_modal') {
-      const isSummon = interaction.customId === 'summon_user_search_modal';
+    if (interaction.customId === 'call_user_search_modal') {
       const query = interaction.fields.getTextInputValue('user_search_query').trim().toLowerCase();
       await interaction.guild.members.fetch().catch(() => null);
 
@@ -884,8 +963,8 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const select = new StringSelectMenuBuilder()
-        .setCustomId(`${isSummon ? 'pick_summon_user_' : 'pick_call_user_'}${interaction.channel.id}`)
-        .setPlaceholder(isSummon ? 'اختر العضو المراد استدعاؤه...' : 'اختر العضو المطلوب من النتائج...')
+        .setCustomId(`pick_call_user_${interaction.channel.id}`)
+        .setPlaceholder('اختر العضو المطلوب من النتائج...')
         .addOptions(
           matches.map((m) => ({
             label: m.displayName.slice(0, 100),
