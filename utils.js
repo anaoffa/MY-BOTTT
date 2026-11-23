@@ -25,8 +25,9 @@ const DEFAULT_CONFIG = {
   buttons: {
     claim: { style: 'Success', roleId: null, label: 'استلام التذكرة', emoji: '✋' },
     unclaim: { style: 'Secondary', roleId: null, label: 'إلغاء الاستلام', emoji: '↩️' },
-    call_staff: { style: 'Primary', roleId: null, label: 'استدعاء الإدارة', emoji: '🔔' },
-    call_user: { style: 'Primary', roleId: null, label: 'استدعاء العضو', emoji: '📣' },
+    call_staff: { style: 'Primary', roleId: null, label: 'طلب إدارة', emoji: '🔔' },
+    call_user: { style: 'Primary', roleId: null, label: 'طلب عضو', emoji: '📩' },
+    summon_user: { style: 'Secondary', roleId: null, label: 'استدعاء عضو', emoji: '📣' },
     close: { style: 'Danger', roleId: null, label: 'إغلاق التذكرة', emoji: '🔒' }
   },
   topClaimsMessageId: null
@@ -106,39 +107,46 @@ function buildTicketControlRows(claimedBy = null) {
   const btns = cfg.buttons;
 
   const claimBtn = new ButtonBuilder()
-    .setCustomId('ticket_claim')
-    .setLabel(btns.claim.label || 'استلام التذكرة')
+    .setCustomId('tkt_claim')
+    .setLabel(btns.claim.label || 'استلام')
     .setEmoji(btns.claim.emoji || '✋')
     .setStyle(getButtonStyle(btns.claim.style))
     .setDisabled(Boolean(claimedBy));
 
   const unclaimBtn = new ButtonBuilder()
-    .setCustomId('ticket_unclaim')
+    .setCustomId('tkt_unclaim')
     .setLabel(btns.unclaim.label || 'إلغاء الاستلام')
     .setEmoji(btns.unclaim.emoji || '↩️')
     .setStyle(getButtonStyle(btns.unclaim.style))
     .setDisabled(!claimedBy);
 
   const callStaffBtn = new ButtonBuilder()
-    .setCustomId('ticket_call_staff')
-    .setLabel(btns.call_staff.label || 'استدعاء الإدارة')
+    .setCustomId('tkt_call_staff')
+    .setLabel(btns.call_staff.label || 'طلب إدارة')
     .setEmoji(btns.call_staff.emoji || '🔔')
     .setStyle(getButtonStyle(btns.call_staff.style));
 
   const callUserBtn = new ButtonBuilder()
-    .setCustomId('ticket_call_user')
-    .setLabel(btns.call_user.label || 'استدعاء العضو')
-    .setEmoji(btns.call_user.emoji || '📣')
+    .setCustomId('tkt_call_user')
+    .setLabel(btns.call_user.label || 'طلب عضو')
+    .setEmoji(btns.call_user.emoji || '📩')
     .setStyle(getButtonStyle(btns.call_user.style));
 
+  const summonUserBtn = new ButtonBuilder()
+    .setCustomId('tkt_summon_user')
+    .setLabel(btns.summon_user.label || 'استدعاء عضو')
+    .setEmoji(btns.summon_user.emoji || '📣')
+    .setStyle(getButtonStyle(btns.summon_user.style));
+
   const closeBtn = new ButtonBuilder()
-    .setCustomId('ticket_close')
-    .setLabel(btns.close.label || 'إغلاق التذكرة')
+    .setCustomId('tkt_close')
+    .setLabel(btns.close.label || 'إغلاق')
     .setEmoji(btns.close.emoji || '🔒')
     .setStyle(getButtonStyle(btns.close.style));
 
   return [
-    new ActionRowBuilder().addComponents(claimBtn, unclaimBtn, callStaffBtn, callUserBtn, closeBtn)
+    new ActionRowBuilder().addComponents(claimBtn, unclaimBtn, callStaffBtn, callUserBtn),
+    new ActionRowBuilder().addComponents(summonUserBtn, closeBtn)
   ];
 }
 
@@ -149,15 +157,15 @@ function buildPanelPayload() {
     .setDescription(
       [
         'مرحباً بك في **مركز الدعم الفني الرسمي لسيرفر SoftMC**.',
-        'اختر القسم المناسب لمشكلتك أو طلبك من القائمة بالأسفل لفتح تذكرة خاصة مع فريق الإدارة.',
+        'اختر القسم المناسب لمشكلتك أو طلبك لفتح تذكرة خاصة مع فريق الإدارة.',
         '',
         '**الأقسام المتاحة:**',
-        '🛠️ **الدعم الفني العام** — للاستفسارات والمشاكل العامة داخل السيرفر.',
-        '🛒 **المتجر والمدفوعات** — لمشاكل الشراء والرتب والباقات.',
-        '🚨 **البلاغات والشكاوى** — للإبلاغ عن مخالفي القوانين أو الهاكات.',
-        '⚖️ **الاعتراض على العقوبات** — لطلب مراجعة الباند أو الميوت.',
-        '🎥 **تقديم الميديا (صناع المحتوى)** — للتقديم على رتبة اليوتيوبر / الستريمر.',
-        '👑 **الإدارة العليا** — للتواصل المباشر مع الإدارة العليا في الحالات الخاصة.'
+        '🛠️ **1 - Technical Support | الدعم الفني**',
+        '💬 **2 - General Questions | الاستفسارات العامة**',
+        '🛒 **3 - Store & Payments | المتجر والمدفوعات**',
+        '🚨 **4 - Player Reports | الشكاوى والبلاغات**',
+        '👑 **5 - Management Contact | التواصل مع الإدارة**',
+        '🎥 **6 - Media & Partnerships | التقديم على الميديا**'
       ].join('\n')
     )
     .setFooter({ text: 'SoftMC Official Ticket System • يرجى الالتزام بقوانين الدعم' })
@@ -168,40 +176,40 @@ function buildPanelPayload() {
     .setPlaceholder('اختر قسم التذكرة من هنا...')
     .addOptions(
       {
-        label: 'الدعم الفني العام',
-        description: 'استفسارات ومساعدة عامة داخل السيرفر',
-        value: 'general_support',
+        label: '1 - Technical Support | الدعم الفني',
+        description: 'استفسارات ومشاكل تقنية داخل السيرفر',
+        value: 'tech',
         emoji: '🛠️'
       },
       {
-        label: 'المتجر والمدفوعات',
+        label: '2 - General Questions | الاستفسارات العامة',
+        description: 'استفسارات عامة عن السيرفر والقوانين',
+        value: 'general',
+        emoji: '💬'
+      },
+      {
+        label: '3 - Store & Payments | المتجر والمدفوعات',
         description: 'مشاكل المتجر، الرتب، وعمليات الدفع',
-        value: 'store_payments',
+        value: 'store',
         emoji: '🛒'
       },
       {
-        label: 'البلاغات والشكاوى',
-        description: 'الإبلاغ عن لاعب مخالف أو مشكلة طارئة',
+        label: '4 - Player Reports | الشكاوى والبلاغات',
+        description: 'الإبلاغ عن لاعب مخالف أو تصرف غير مناسب',
         value: 'reports',
         emoji: '🚨'
       },
       {
-        label: 'الاعتراض على العقوبات',
-        description: 'تقديم طلب فك حظر أو مراجعة عقوبة',
-        value: 'appeals',
-        emoji: '⚖️'
-      },
-      {
-        label: 'تقديم الميديا (صناع المحتوى)',
-        description: 'التقديم على رتب صناع المحتوى والستريمرز',
-        value: 'media_apply',
-        emoji: '🎥'
-      },
-      {
-        label: 'الإدارة العليا',
-        description: 'تواصل مباشر مع الإدارة العليا فقط',
-        value: 'high_staff',
+        label: '5 - Management Contact | التواصل مع الإدارة',
+        description: 'تواصل مباشر مع الإدارة العليا',
+        value: 'management',
         emoji: '👑'
+      },
+      {
+        label: '6 - Media & Partnerships | التقديم على الميديا',
+        description: 'فتح تذكرة للتقديم على الميديا والشراكات',
+        value: 'media',
+        emoji: '🎥'
       }
     );
 
@@ -393,8 +401,9 @@ function getSlashCommands() {
         .addChoices(
           { name: 'Claim (استلام)', value: 'claim' },
           { name: 'Unclaim (إلغاء الاستلام)', value: 'unclaim' },
-          { name: 'Call Staff (استدعاء الإدارة)', value: 'call_staff' },
-          { name: 'Call User (استدعاء العضو)', value: 'call_user' },
+          { name: 'Call Staff (طلب إدارة)', value: 'call_staff' },
+          { name: 'Call User (طلب عضو)', value: 'call_user' },
+          { name: 'Summon User (استدعاء عضو)', value: 'summon_user' },
           { name: 'Close (إغلاق)', value: 'close' }
         )
     )
