@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  REST,
+  Routes,
   SlashCommandBuilder,
   PermissionFlagsBits,
   EmbedBuilder,
@@ -8,6 +10,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  MessageFlags
 } = require('discord.js');
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -24,9 +27,9 @@ const DEFAULT_CONFIG = {
     unclaim: { style: 'Secondary', roleId: null, label: 'إلغاء الاستلام', emoji: '↩️' },
     call_staff: { style: 'Primary', roleId: null, label: 'استدعاء الإدارة', emoji: '🔔' },
     call_user: { style: 'Primary', roleId: null, label: 'استدعاء العضو', emoji: '📣' },
-    close: { style: 'Danger', roleId: null, label: 'إغلاق التذكرة', emoji: '🔒' },
+    close: { style: 'Danger', roleId: null, label: 'إغلاق التذكرة', emoji: '🔒' }
   },
-  topClaimsMessageId: null,
+  topClaimsMessageId: null
 };
 
 function readJson(filePath, fallback) {
@@ -36,7 +39,7 @@ function readJson(filePath, fallback) {
       return JSON.parse(JSON.stringify(fallback));
     }
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (err) {
+  } catch {
     return JSON.parse(JSON.stringify(fallback));
   }
 }
@@ -75,7 +78,7 @@ function getStaffRoles() {
   return {
     junior: parseRoleIds(process.env.JUNIOR_STAFF_ROLES),
     senior: parseRoleIds(process.env.SENIOR_STAFF_ROLES),
-    high: parseRoleIds(process.env.HIGH_STAFF_ROLES),
+    high: parseRoleIds(process.env.HIGH_STAFF_ROLES)
   };
 }
 
@@ -135,7 +138,7 @@ function buildTicketControlRows(claimedBy = null) {
     .setStyle(getButtonStyle(btns.close.style));
 
   return [
-    new ActionRowBuilder().addComponents(claimBtn, unclaimBtn, callStaffBtn, callUserBtn, closeBtn),
+    new ActionRowBuilder().addComponents(claimBtn, unclaimBtn, callStaffBtn, callUserBtn, closeBtn)
   ];
 }
 
@@ -154,7 +157,7 @@ function buildPanelPayload() {
         '🚨 **البلاغات والشكاوى** — للإبلاغ عن مخالفي القوانين أو الهاكات.',
         '⚖️ **الاعتراض على العقوبات** — لطلب مراجعة الباند أو الميوت.',
         '🎥 **تقديم الميديا (صناع المحتوى)** — للتقديم على رتبة اليوتيوبر / الستريمر.',
-        '👑 **الإدارة العليا** — للتواصل المباشر مع الإدارة العليا في الحالات الخاصة.',
+        '👑 **الإدارة العليا** — للتواصل المباشر مع الإدارة العليا في الحالات الخاصة.'
       ].join('\n')
     )
     .setFooter({ text: 'SoftMC Official Ticket System • يرجى الالتزام بقوانين الدعم' })
@@ -168,43 +171,43 @@ function buildPanelPayload() {
         label: 'الدعم الفني العام',
         description: 'استفسارات ومساعدة عامة داخل السيرفر',
         value: 'general_support',
-        emoji: '🛠️',
+        emoji: '🛠️'
       },
       {
         label: 'المتجر والمدفوعات',
         description: 'مشاكل المتجر، الرتب، وعمليات الدفع',
         value: 'store_payments',
-        emoji: '🛒',
+        emoji: '🛒'
       },
       {
         label: 'البلاغات والشكاوى',
         description: 'الإبلاغ عن لاعب مخالف أو مشكلة طارئة',
         value: 'reports',
-        emoji: '🚨',
+        emoji: '🚨'
       },
       {
         label: 'الاعتراض على العقوبات',
         description: 'تقديم طلب فك حظر أو مراجعة عقوبة',
         value: 'appeals',
-        emoji: '⚖️',
+        emoji: '⚖️'
       },
       {
         label: 'تقديم الميديا (صناع المحتوى)',
         description: 'التقديم على رتب صناع المحتوى والستريمرز',
         value: 'media_apply',
-        emoji: '🎥',
+        emoji: '🎥'
       },
       {
         label: 'الإدارة العليا',
         description: 'تواصل مباشر مع الإدارة العليا فقط',
         value: 'high_staff',
-        emoji: '👑',
+        emoji: '👑'
       }
     );
 
   return {
     embeds: [embed],
-    components: [new ActionRowBuilder().addComponents(selectMenu)],
+    components: [new ActionRowBuilder().addComponents(selectMenu)]
   };
 }
 
@@ -296,18 +299,33 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-async function generateHtmlTranscript(channel, meta = {}) {
-  const fetched = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-  const messages = fetched ? Array.from(fetched.values()).reverse() : [];
+function buildTranscriptHtml(options = {}) {
+  const {
+    guildName = 'SoftMC',
+    channelName = 'ticket',
+    ownerId = '',
+    claimedById = null,
+    claimedByName = 'غير مستلمة',
+    claimedByAvatar = '',
+    closedById = '',
+    ratingText = '',
+    reasonText = '',
+    messages = []
+  } = options;
 
-  const rowsHtml = messages
+  const msgList = Array.isArray(messages) ? messages : [];
+
+  const rowsHtml = msgList
     .map((m) => {
-      const time = new Date(m.createdTimestamp).toLocaleString('ar-EG');
-      const author = escapeHtml(m.author ? m.author.tag : 'Unknown');
-      const content = escapeHtml(m.content || (m.embeds.length ? '[Embed Message]' : '[Attachment]'));
+      const ts = m.createdTimestamp ? new Date(m.createdTimestamp).toLocaleString('ar-EG') : '';
+      const author = escapeHtml(m.author?.tag || m.author?.username || 'Unknown');
+      const rawContent =
+        m.content ||
+        (m.embeds && m.embeds.length ? '[Embed Message]' : m.attachments && m.attachments.size ? '[Attachment]' : '');
+      const content = escapeHtml(rawContent);
       return `
         <div class="msg">
-          <div class="meta"><span class="author">${author}</span> <span class="time">${time}</span></div>
+          <div class="meta"><span class="author">${author}</span> <span class="time">${escapeHtml(ts)}</span></div>
           <div class="body">${content.replace(/\n/g, '<br>')}</div>
         </div>
       `;
@@ -318,10 +336,11 @@ async function generateHtmlTranscript(channel, meta = {}) {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <title>SoftMC Transcript - ${escapeHtml(channel.name)}</title>
+  <title>${escapeHtml(guildName)} Transcript - ${escapeHtml(channelName)}</title>
   <style>
     body { font-family: Tahoma, Arial, sans-serif; background: #1e1f22; color: #f2f3f5; padding: 24px; }
-    .header { background: #2b2d31; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-right: 4px solid #5865f2; }
+    .header { background: #2b2d31; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-right: 4px solid #5865f2; display: flex; align-items: center; gap: 14px; }
+    .avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
     .msg { background: #2b2d31; padding: 12px 16px; border-radius: 6px; margin-bottom: 10px; }
     .meta { font-size: 13px; color: #b5bac1; margin-bottom: 6px; }
     .author { color: #ffffff; font-weight: bold; margin-left: 8px; }
@@ -330,12 +349,30 @@ async function generateHtmlTranscript(channel, meta = {}) {
 </head>
 <body>
   <div class="header">
-    <h2>🎫 SoftMC Ticket Transcript — #${escapeHtml(channel.name)}</h2>
-    <p>صاحب التذكرة: ${escapeHtml(meta.openerTag || 'غير معروف')} | المستلم: ${escapeHtml(meta.claimerTag || 'لم تُستلم')}</p>
+    ${claimedByAvatar ? `<img class="avatar" src="${escapeHtml(claimedByAvatar)}" alt="Claimer" />` : ''}
+    <div>
+      <h2>🎫 ${escapeHtml(guildName)} Ticket Transcript — #${escapeHtml(channelName)}</h2>
+      <p>صاحب التذكرة: ${escapeHtml(ownerId)} | المستلم: ${escapeHtml(claimedByName)} (${escapeHtml(claimedById || 'None')}) | أغلقها: ${escapeHtml(closedById)}</p>
+      ${ratingText ? `<p>التقييم: ${escapeHtml(ratingText)} | السبب: ${escapeHtml(reasonText)}</p>` : ''}
+    </div>
   </div>
   ${rowsHtml || '<p>لا توجد رسائل مسجلة في هذه التذكرة.</p>'}
 </body>
 </html>`;
+}
+
+async function generateHtmlTranscript(channel, meta = {}) {
+  const fetched = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  const messages = fetched ? Array.from(fetched.values()).reverse() : [];
+  return buildTranscriptHtml({
+    guildName: channel.guild?.name || 'SoftMC',
+    channelName: channel.name,
+    ownerId: meta.openerId || '',
+    claimedById: meta.claimerId || null,
+    claimedByName: meta.claimerTag || 'لم تُستلم',
+    closedById: meta.closedById || '',
+    messages
+  });
 }
 
 function getSlashCommands() {
@@ -407,6 +444,106 @@ function getSlashCommands() {
   return [applytCmd.toJSON(), ticketBtnCmd.toJSON(), resetCmd.toJSON()];
 }
 
+async function registerSlashCommands(client) {
+  const token = process.env.DISCORD_TOKEN;
+  const clientId = process.env.CLIENT_ID || client.user?.id;
+  if (!token || !clientId) return;
+
+  const rest = new REST({ version: '10' }).setToken(token);
+  const body = getSlashCommands();
+
+  try {
+    if (process.env.GUILD_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(clientId, process.env.GUILD_ID),
+        { body }
+      );
+    } else {
+      await rest.put(Routes.applicationCommands(clientId), { body });
+    }
+  } catch (err) {
+    console.error('Failed to register slash commands:', err);
+  }
+}
+
+async function handleConfigSlashCommand(interaction, helpers = {}) {
+  const { loadData, saveData, updateTopClaimsBoard: updateBoard } = helpers;
+
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({
+      content: '❌ هذا الأمر متاح فقط لأصحاب صلاحية **Administrator**.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  if (interaction.commandName === 'ticket-btn') {
+    const btnKey = interaction.options.getString('button');
+    const color = interaction.options.getString('color');
+    const role = interaction.options.getRole('role');
+    const clearRole = interaction.options.getBoolean('clear_role');
+
+    const data = typeof loadData === 'function' ? loadData() : getConfig();
+    data.buttons = data.buttons || {};
+    const current = data.buttons[btnKey] || { style: 'Secondary', roleId: null };
+    const beforeStr = `style=${current.style}, role=${current.roleId || 'none'}`;
+
+    if (color) current.style = color;
+    if (clearRole) current.roleId = null;
+    else if (role) current.roleId = role.id;
+
+    data.buttons[btnKey] = current;
+    if (typeof saveData === 'function') saveData(data);
+    saveConfig(data);
+
+    const afterStr = `style=${current.style}, role=${current.roleId || 'none'}`;
+    await sendConfigLog(interaction.client, {
+      user: interaction.user,
+      action: 'تعديل زر تذكرة',
+      target: btnKey,
+      before: beforeStr,
+      after: afterStr
+    });
+
+    return interaction.reply({
+      content: `✅ تم تحديث إعدادات الزر **${btnKey}** (${afterStr}).`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  if (interaction.commandName === 'reset') {
+    const staffUser = interaction.options.getUser('staff');
+    const amount = interaction.options.getInteger('amount');
+
+    const data = typeof loadData === 'function' ? loadData() : { claimStats: {} };
+    data.claimStats = data.claimStats || {};
+
+    if (staffUser) {
+      const prev = data.claimStats[staffUser.id] || 0;
+      const next = amount ? Math.max(0, prev - amount) : 0;
+      data.claimStats[staffUser.id] = next;
+
+      if (typeof saveData === 'function') saveData(data);
+      if (typeof updateBoard === 'function') await updateBoard();
+      await updateTopClaimsBoard(interaction.client);
+
+      return interaction.reply({
+        content: `✅ تم تحديث نقاط <@${staffUser.id}> من **${prev}** إلى **${next}**.`,
+        flags: MessageFlags.Ephemeral
+      });
+    } else {
+      data.claimStats = {};
+      if (typeof saveData === 'function') saveData(data);
+      if (typeof updateBoard === 'function') await updateBoard();
+      await updateTopClaimsBoard(interaction.client);
+
+      return interaction.reply({
+        content: '✅ تم تصفير جميع نقاط استلام التذاكر بنجاح.',
+        flags: MessageFlags.Ephemeral
+      });
+    }
+  }
+}
+
 module.exports = {
   getConfig,
   saveConfig,
@@ -418,6 +555,9 @@ module.exports = {
   buildTopClaimsPayload,
   updateTopClaimsBoard,
   sendConfigLog,
+  buildTranscriptHtml,
   generateHtmlTranscript,
   getSlashCommands,
+  registerSlashCommands,
+  handleConfigSlashCommand
 };
