@@ -321,30 +321,57 @@ async function updateTopClaimsBoard() {
   }
 }
 
-// قسمين فوق (2 Embeds + 2 أزرار) وأربعة تحت (4 Embeds + 4 أزرار) بلون أصفر
+// قسمين فوق (زرين جنب بعض في صف واحد) وأربعة تحت (صفين، كل صف فيه زرين جنب بعض) بلون أصفر
 function buildCategoryMessageGroups() {
   const allCats = Object.values(CATEGORIES);
-  const groups = [allCats.slice(0, 2), allCats.slice(2)];
+  const topGroup = allCats.slice(0, 2);
+  const bottomGroup = allCats.slice(2);
 
-  return groups.map((group) => {
-    const embeds = group.map((cat) =>
+  const topPayload = {
+    embeds: topGroup.map((cat) =>
       new EmbedBuilder()
         .setColor(0xf1c40f)
         .setDescription(cat.body)
-    );
-
-    const components = group.map((cat) =>
+    ),
+    components: [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`open_ticket_${cat.key}`)
-          .setLabel(cat.shortLabel)
-          .setEmoji(cat.emoji)
-          .setStyle(cat.style)
+        topGroup.map((cat) =>
+          new ButtonBuilder()
+            .setCustomId(`open_ticket_${cat.key}`)
+            .setLabel(cat.shortLabel)
+            .setEmoji(cat.emoji)
+            .setStyle(cat.style)
+        )
+      )
+    ]
+  };
+
+  const bottomRows = [];
+  for (let i = 0; i < bottomGroup.length; i += 2) {
+    const pair = bottomGroup.slice(i, i + 2);
+    bottomRows.push(
+      new ActionRowBuilder().addComponents(
+        pair.map((cat) =>
+          new ButtonBuilder()
+            .setCustomId(`open_ticket_${cat.key}`)
+            .setLabel(cat.shortLabel)
+            .setEmoji(cat.emoji)
+            .setStyle(cat.style)
+        )
       )
     );
+  }
 
-    return { embeds, components };
-  });
+  const bottomPayload = {
+    embeds: bottomGroup.map((cat) =>
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setDescription(cat.body)
+    ),
+    components: bottomRows
+  };
+
+  return [topPayload, bottomPayload];
 }
 
 function buildTicketActionRows(buttonSettings, claimedBy = null) {
