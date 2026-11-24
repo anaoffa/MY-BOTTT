@@ -13,7 +13,10 @@ const {
   PermissionFlagsBits,
   MessageFlags,
   AttachmentBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  REST,
+  Routes,
+  SlashCommandBuilder
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -29,7 +32,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildPresences
   ],
   partials: [Partials.Channel, Partials.Message, Partials.User]
 });
@@ -42,6 +46,14 @@ const TICKET_COOLDOWN_MS = 2 * 60 * 1000;
 
 // الحد الأقصى لاختصارات AFK النصية لكل عضو
 const MAX_AFK_SHORTCUTS = 3;
+
+// معرف صاحب البوت للتحكم الكامل
+const BOT_OWNER_ID = (process.env.BOT_OWNER_ID || '').trim();
+const CONTROL_GUILD_ID = (process.env.CONTROL_GUILD_ID || '').trim();
+
+function isBotOwner(userId) {
+  return Boolean(BOT_OWNER_ID && userId === BOT_OWNER_ID);
+}
 
 // ================= الإعدادات والـ IDs =================
 const parseIds = (val) =>
@@ -138,8 +150,16 @@ const CATEGORIES = {
   }
 };
 
-// حفظ حالة التذاكر، عداد الاستلام، إجمالي التقييمات، اختصارات AFK، وتخصيص الأزرار
+// حفظ حالة التذاكر، عداد الاستلام، إجمالي التقييمات، اختصارات AFK، تخصيص الأزرار، وحالة البوت
 const DATA_FILE = path.join(__dirname, 'tickets_data.json');
+const BACKUP_DIR = path.join(__dirname, 'backups');
+
+function getDefaultBotState() {
+  return {
+    mode: 'online', // 'online' | 'maintenance' | 'offline'
+    lastBackupAt: null
+  };
+}
 
 function loadData() {
   const defaultButtons = {
@@ -160,7 +180,8 @@ function loadData() {
       afkShortcuts: {},
       ticketCooldowns: {},
       topBoardMessageId: null,
-      buttons: defaultButtons
+      buttons: defaultButtons,
+      botState: getDefaultBotState()
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -175,6 +196,7 @@ function loadData() {
     parsed.ticketCooldowns = parsed.ticketCooldowns || {};
     parsed.topBoardMessageId = parsed.topBoardMessageId || null;
     parsed.buttons = Object.assign(defaultButtons, parsed.buttons || {});
+    parsed.botState = Object.assign(getDefaultBotState(), parsed.botState || {});
     return parsed;
   } catch {
     return {
@@ -185,13 +207,132 @@ function loadData() {
       afkShortcuts: {},
       ticketCooldowns: {},
       topBoardMessageId: null,
-      buttons: defaultButtons
+      buttons: defaultButtons,
+      botState: getDefaultBotState()
     };
   }
 }
 
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+// إنشاء نسخة احتياطية كاملة لملف البيانات داخل مجلد backups
+function createDataBackup(reason = 'state') {
+  if (!fs.existsSync(DATA_FILE)) return null;
+  if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFile = path.join(BACKUP_DIR, `tickets_data_${reason}_${stamp}.json`);
+  fs.copyFileSync(DATA_FILE, backupFile);
+
+  const files = fs
+    .readdirSync(BACKUP_DIR)
+    .filter((f) => f.startsWith('tickets_data_') && f.endsWith('.json'))
+    .sort()
+    .reverse();
+
+  for (const oldFile of files.slice(20)) {
+    fs.unlinkSync(path.join(BACKUP_DIR, oldFile));
+  }
+
+  return backupFile;
+}
+
+function isBotRestrictedMode(data) {
+  const mode = data?.botState?.mode || 'online';
+  return mode === 'maintenance' || mode === 'offline';
+}
+
+async function applyBotPresenceMode(clientInstance, mode) {
+  if (!clientInstance?.user) return;
+  if (mode === 'online') {
+    await clientInstance.user.setPresence({
+      status: 'online',
+      activities: []
+    }).catch(() => null);
+  } else {
+    // في وضع الصيانة أو الأوفلاين يصبح البوت invisible في ديسكورد
+    await clientInstance.user.setPresence({
+      status: 'invisible',
+      activities: []
+    }).catch(() => null);
+  }
+}
+
+function buildOwnerControlPanel(data) {
+  const mode = data?.botState?.mode || 'online';
+  const lastBackup = data?.botState?.lastBackupAt
+    ? `<t:${Math.floor(data.botState.lastBackupAt / 1000)}:R>`
+    : 'لم يتم أخذ نسخة بعد';
+
+  const modeLabels = {
+    online: '🟢 أونلاين (يعمل بشكل طبيعي في كل السيرفرات)',
+    maintenance: '🛠️ وضع صيانة (Invisible + يبلغ المستخدمين بوجود صيانة)',
+    offline: '⚫ أوفلاين وهمي (Invisible + لا يرد نهائياً ويترك تحذير ديسكورد)'
+  };
+
+  const embed = new EmbedBuilder()
+    .setColor(mode === 'online' ? 0x2ecc71 : mode === 'maintenance' ? 0xf39c12 : 0xe74c3c)
+    .setTitle('🎛️ لوحة تحكم البوت للمالك | Owner Control Panel')
+    .setDescription(
+      `• **الحالة الحالية:** ${modeLabels[mode] || modeLabels.online}\n` +
+      `• **نطاق التطبيق:** جميع السيرفرات\n` +
+      `• **إحصائيات التوب 5 والنقاط:** محفوظة ولا تتأثر عند الصيانة أو الأوفلاين\n` +
+      `• **آخر نسخة احتياطية:** ${lastBackup}`
+    )
+    .setFooter({ text: 'متاح لصاحب البوت فقط • النسخ الاحتياطية محفوظة في مجلد backups' })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('owner_mode_online')
+      .setLabel('أونلاين')
+      .setEmoji('🟢')
+      .setStyle(mode === 'online' ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('owner_mode_maintenance')
+      .setLabel('وضع صيانة')
+      .setEmoji('🛠️')
+      .setStyle(mode === 'maintenance' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('owner_mode_offline')
+      .setLabel('أوفلاين')
+      .setEmoji('⚫')
+      .setStyle(mode === 'offline' ? ButtonStyle.Danger : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('owner_manual_backup')
+      .setLabel('نسخة احتياطية')
+      .setEmoji('💾')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
+async function registerOwnerControlSlashCommand(clientInstance) {
+  if (!process.env.DISCORD_TOKEN || !clientInstance?.user?.id) return;
+
+  const controlCmd = new SlashCommandBuilder()
+    .setName('botcontrol')
+    .setDescription('لوحة تحكم حالة البوت والنسخ الاحتياطية لصاحب البوت فقط')
+    .toJSON();
+
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+  if (CONTROL_GUILD_ID) {
+    await rest.put(Routes.applicationGuildCommands(clientInstance.user.id, CONTROL_GUILD_ID), {
+      body: [controlCmd]
+    }).catch(() => null);
+  } else {
+    const existing = await rest.get(Routes.applicationCommands(clientInstance.user.id)).catch(() => []);
+    const filtered = Array.isArray(existing) ? existing.filter((c) => c.name !== 'botcontrol') : [];
+    await rest.put(Routes.applicationCommands(clientInstance.user.id), {
+      body: [...filtered, controlCmd]
+    }).catch(() => null);
+  }
 }
 
 function formatDuration(ms) {
@@ -403,10 +544,13 @@ function buildTopClaimsPayload(data) {
 
 async function updateTopClaimsBoard() {
   if (!CONFIG.topClaimsChannelId) return;
+  const data = loadData();
+  // لا يتم إرسال أو تحديث التوب 5 في وضع الصيانة أو الأوفلاين للحفاظ على البيانات دون إرسال رسائل
+  if (isBotRestrictedMode(data)) return;
+
   const channel = await client.channels.fetch(CONFIG.topClaimsChannelId).catch(() => null);
   if (!channel) return;
 
-  const data = loadData();
   const payload = buildTopClaimsPayload(data);
 
   if (data.topBoardMessageId) {
@@ -489,6 +633,10 @@ function buildTicketActionRows(buttonSettings, claimedBy = null) {
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await registerSlashCommands(client);
+  await registerOwnerControlSlashCommand(client);
+
+  const initialData = loadData();
+  await applyBotPresenceMode(client, initialData.botState?.mode || 'online');
   await updateTopClaimsBoard();
 });
 
@@ -497,6 +645,13 @@ client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
   const data = loadData();
+  const botMode = data.botState?.mode || 'online';
+
+  // في وضع الأوفلاين أو الصيانة لا يستجيب البوت لرسائل الشات العادية
+  if (botMode === 'offline' || botMode === 'maintenance') {
+    return;
+  }
+
   data.afkUsers = data.afkUsers || {};
   data.afkShortcuts = data.afkShortcuts || {};
   let dataChanged = false;
@@ -602,8 +757,78 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ================= معالجة أوامر السلاش =================
+// ================= معالجة أوامر السلاش والأزرار =================
 client.on('interactionCreate', async (interaction) => {
+  const currentData = loadData();
+  const botMode = currentData.botState?.mode || 'online';
+
+  const isControlCommand =
+    interaction.isChatInputCommand() && interaction.commandName === 'botcontrol';
+  const isControlButton =
+    interaction.isButton() &&
+    ['owner_mode_online', 'owner_mode_maintenance', 'owner_mode_offline', 'owner_manual_backup'].includes(
+      interaction.customId
+    );
+
+  // لوحة تحكم المالك متاحة لصاحب البوت فقط في أي وقت
+  if (isControlCommand || isControlButton) {
+    if (!isBotOwner(interaction.user.id)) {
+      if (interaction.isRepliable()) {
+        return interaction.reply({
+          content: '❌ هذا الأمر واللوحة مخصصان لصاحب البوت فقط.',
+          flags: MessageFlags.Ephemeral
+        }).catch(() => null);
+      }
+      return;
+    }
+
+    if (isControlCommand) {
+      return interaction.reply({
+        ...buildOwnerControlPanel(currentData),
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    if (interaction.customId === 'owner_manual_backup') {
+      createDataBackup('manual');
+      currentData.botState.lastBackupAt = Date.now();
+      saveData(currentData);
+      return interaction.update(buildOwnerControlPanel(currentData));
+    }
+
+    const nextModeMap = {
+      owner_mode_online: 'online',
+      owner_mode_maintenance: 'maintenance',
+      owner_mode_offline: 'offline'
+    };
+    const nextMode = nextModeMap[interaction.customId];
+    if (nextMode) {
+      createDataBackup(`mode_${nextMode}`);
+      currentData.botState.mode = nextMode;
+      currentData.botState.lastBackupAt = Date.now();
+      saveData(currentData);
+      await applyBotPresenceMode(client, nextMode);
+      return interaction.update(buildOwnerControlPanel(currentData));
+    }
+    return;
+  }
+
+  // في وضع الأوفلاين: لا يستجيب البوت نهائياً لغير المالك ليترك تحذير ديسكورد الطبيعي
+  if (botMode === 'offline' && !isBotOwner(interaction.user.id)) {
+    return;
+  }
+
+  // في وضع الصيانة: يبلغ المستخدم بوجود صيانة لأي أمر أو تكت أو زر
+  if (botMode === 'maintenance' && !isBotOwner(interaction.user.id)) {
+    if (interaction.isRepliable()) {
+      return interaction.reply({
+        content: '🛠️ البوت في **وضع الصيانة** حالياً ولا يستجيب للأوامر أو فتح التذاكر مؤقتاً.',
+        flags: MessageFlags.Ephemeral
+      }).catch(() => null);
+    }
+    return;
+  }
+
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'afk') {
       const reason = (interaction.options.getString('reason') || '').trim() || 'غير محدد';
@@ -1211,220 +1436,4 @@ client.on('interactionCreate', async (interaction) => {
           ViewChannel: true,
           SendMessages: true,
           ReadMessageHistory: true,
-          AttachFiles: true
-        }).catch(() => null);
-
-        const targetUser = await client.users.fetch(ownerId).catch(() => null);
-        let dmSent = false;
-
-        if (targetUser) {
-          const dmMsg = await targetUser
-            .send(`📣 تم استدعاؤك بواسطة الإداري <@${interaction.user.id}> في تذكرتك <#${interaction.channel.id}>.`)
-            .catch(() => null);
-          dmSent = Boolean(dmMsg);
-        }
-
-        return interaction.reply({
-          content: dmSent
-            ? `📣 تم استدعاء صاحب التذكرة <@${ownerId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
-            : `📣 تم استدعاء صاحب التذكرة <@${ownerId}> بواسطة <@${interaction.user.id}> (الخاص مقفول لديه).`
-        });
-      }
-
-      // لو التذكرة مش مستلمة: أي شخص غير إداري أو غير صاحب التذكرة يتمنع
-      if (!ticket.claimedBy && !staffMember && !isOwner) {
-        return interaction.reply({
-          content: '⚠️ يرجى استلام التكت',
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      // زر إلغاء الاستلام (Unclaim)
-      if (id === 'tkt_unclaim') {
-        if (!staffMember && !isClaimer) {
-          return interaction.reply({
-            content: '❌ هذا الزر مخصص للإدارة فقط.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-        if (!ticket.claimedBy) {
-          return interaction.reply({
-            content: '⚠️ التذكرة غير مستلمة حالياً.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-
-        ticket.claimedBy = null;
-        saveData(data);
-
-        if (interaction.message && interaction.message.editable) {
-          await interaction.message.edit({
-            components: buildTicketActionRows(data.buttons, null)
-          }).catch(() => null);
-        }
-
-        return interaction.reply({
-          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}> وأصبح الاستلام متاحاً من جديد.`
-        });
-      }
-
-      // زر طلب إدارة
-      if (id === 'tkt_call_staff') {
-        if (!staffMember && !isOwner) {
-          return interaction.reply({
-            content: '❌ لا تملك صلاحية استخدام هذا الزر.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-        if (ticket.claimedBy) {
-          return interaction.reply({
-            content: `📣 تم استدعاء الإداري المستلم: <@${ticket.claimedBy}> بواسطة <@${interaction.user.id}>.`
-          });
-        } else {
-          const mentions = getCategoryMentions(ticket.categoryKey);
-          return interaction.reply({
-            content: `📣 تم طلب الإدارة بواسطة <@${interaction.user.id}>: ${mentions || 'يرجى متابعة التذكرة'}`
-          });
-        }
-      }
-
-      // زر طلب عضو (بحث بالاسم أو اليوزر)
-      if (id === 'tkt_call_user') {
-        if (!staffMember && !isClaimer) {
-          return interaction.reply({
-            content: '❌ هذا الزر مخصص للإدارة فقط.',
-            flags: MessageFlags.Ephemeral
-          });
-        }
-
-        const searchModal = new ModalBuilder()
-          .setCustomId('call_user_search_modal')
-          .setTitle('طلب عضو | بحث بالاسم أو اليوزر');
-
-        const queryInput = new TextInputBuilder()
-          .setCustomId('user_search_query')
-          .setLabel('اكتب حرفين أو أكثر أو الاسم/اليوزر كامل')
-          .setStyle(TextInputStyle.Short)
-          .setMinLength(2)
-          .setRequired(true);
-
-        searchModal.addComponents(new ActionRowBuilder().addComponents(queryInput));
-        return interaction.showModal(searchModal);
-      }
-    }
-  }
-
-  // ================= معالجة القوائم المنسدلة =================
-  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('pick_call_user_')) {
-    const ticketChannelId = interaction.customId.replace('pick_call_user_', '');
-    const targetUserId = interaction.values[0];
-    const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
-
-    if (!ticketChannel) {
-      return interaction.update({
-        content: '❌ تعذر العثور على روم التذكرة.',
-        components: []
-      });
-    }
-
-    await ticketChannel.permissionOverwrites.edit(targetUserId, {
-      ViewChannel: true,
-      SendMessages: true,
-      ReadMessageHistory: true,
-      AttachFiles: true
-    });
-
-    const targetUser = await client.users.fetch(targetUserId).catch(() => null);
-    let dmSent = false;
-
-    if (targetUser) {
-      const dmMsg = await targetUser
-        .send(
-          `📩 مرحباً <@${targetUserId}>، تم إضافتك إلى التذكرة <#${ticketChannel.id}> وتم طلبك بواسطة الإداري <@${interaction.user.id}>.`
-        )
-        .catch(() => null);
-      dmSent = Boolean(dmMsg);
-    }
-
-    if (dmSent) {
-      await ticketChannel.send({
-        content:
-          `✅ تم إرسال رسالة للعضو في الخاص ووصلته بنجاح.\n` +
-          `📣 <@${targetUserId}> تم طلبك في التذكرة بواسطة الإداري <@${interaction.user.id}>.`
-      });
-    } else {
-      await ticketChannel.send({
-        content:
-          `❌ فشل إرسال الرسالة للعضو في الخاص لأن الخاص مقفول لديه.\n` +
-          `📣 <@${targetUserId}>`
-      });
-    }
-
-    return interaction.update({
-      content: dmSent
-        ? `✅ تم إرسال الرسالة في الخاص للعضو <@${targetUserId}> ومنشنته داخل التذكرة.`
-        : `⚠️ فشل إرسال الرسالة في الخاص للعضو <@${targetUserId}> وتمت منشنته داخل التذكرة فقط.`,
-      components: []
-    });
-  }
-
-  // ================= معالجة المودالات =================
-  if (interaction.isModalSubmit()) {
-    if (interaction.customId === 'call_user_search_modal') {
-      const query = interaction.fields.getTextInputValue('user_search_query').trim().toLowerCase();
-      await interaction.guild.members.fetch().catch(() => null);
-
-      const matches = interaction.guild.members.cache
-        .filter((m) => {
-          if (m.user.bot) return false;
-          const uname = (m.user.username || '').toLowerCase();
-          const gname = (m.user.globalName || '').toLowerCase();
-          const dname = (m.displayName || '').toLowerCase();
-          return uname.includes(query) || gname.includes(query) || dname.includes(query);
-        })
-        .first(25);
-
-      if (!matches || matches.length === 0) {
-        return interaction.reply({
-          content: `❌ لم يتم العثور على أعضاء مطابقين لـ **"${query}"**.`,
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      const select = new StringSelectMenuBuilder()
-        .setCustomId(`pick_call_user_${interaction.channel.id}`)
-        .setPlaceholder('اختر العضو المطلوب من النتائج...')
-        .addOptions(
-          matches.map((m) => ({
-            label: m.displayName.slice(0, 100),
-            description: `@${m.user.username}`.slice(0, 100),
-            value: m.id
-          }))
-        );
-
-      return interaction.reply({
-        content: `🔎 نتائج البحث عن **"${query}"** (${matches.length}):`,
-        components: [new ActionRowBuilder().addComponents(select)],
-        flags: MessageFlags.Ephemeral
-      });
-    }
-
-    if (interaction.customId.startsWith('rating_reason_modal_')) {
-      const chId = interaction.customId.replace('rating_reason_modal_', '');
-      const reasonVal = interaction.fields.getTextInputValue('rating_reason_input') || '';
-      const state = client._pendingRatings?.get(chId);
-
-      if (state) {
-        state.reason = reasonVal;
-        state.submitted = true;
-      }
-
-      return interaction.reply({
-        content: '✅ تم تسجيل تقييمك وسببه بنجاح.',
-        flags: MessageFlags.Ephemeral
-      });
-    }
-  }
-});
-
-client.login(process.env.DISCORD_TOKEN);
+        
