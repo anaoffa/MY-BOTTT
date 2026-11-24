@@ -307,7 +307,6 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-// تحويل المنشنات في النص بعد الهروب إلى تنسيق منشن ديسكورد في الـ HTML
 function formatMentionsForHtml(escapedText) {
   return String(escapedText || '')
     .replace(/&lt;@!?(\d+)&gt;/g, '<span class="mention user-mention">@User • $1</span>')
@@ -550,6 +549,14 @@ function getSlashCommands() {
   ];
 }
 
+function parseGuildIds() {
+  const raw = process.env.GUILD_IDS || process.env.GUILD_ID || '';
+  return raw
+    .split(',')
+    .map((id) => id.replace(/^"+|"+$/g, '').trim())
+    .filter(Boolean);
+}
+
 async function registerSlashCommands(client) {
   const token = process.env.DISCORD_TOKEN;
   const clientId = process.env.CLIENT_ID || client.user?.id;
@@ -557,13 +564,16 @@ async function registerSlashCommands(client) {
 
   const rest = new REST({ version: '10' }).setToken(token);
   const body = getSlashCommands();
+  const guildIds = parseGuildIds();
 
   try {
-    if (process.env.GUILD_ID) {
-      await rest.put(
-        Routes.applicationGuildCommands(clientId, process.env.GUILD_ID),
-        { body }
-      );
+    if (guildIds.length > 0) {
+      for (const guildId of guildIds) {
+        await rest.put(
+          Routes.applicationGuildCommands(clientId, guildId),
+          { body }
+        );
+      }
     } else {
       await rest.put(Routes.applicationCommands(clientId), { body });
     }
