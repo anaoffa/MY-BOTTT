@@ -1473,4 +1473,271 @@ client.on('interactionCreate', async (interaction) => {
         if (!staffMember && !isClaimer) {
           return interaction.reply({
             content: '❌ هذا الزر مخصص للإدارة فقط.',
-            
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const ownerId = ticket.ownerId;
+        await interaction.channel.permissionOverwrites.edit(ownerId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true
+        }).catch(() => null);
+
+        const targetUser = await client.users.fetch(ownerId).catch(() => null);
+        let dmSent = false;
+
+        if (targetUser) {
+          const dmMsg = await targetUser
+            .send(`📣 تم استدعاؤك بواسطة الإداري <@${interaction.user.id}> في تذكرتك <#${interaction.channel.id}>.`)
+            .catch(() => null);
+          dmSent = Boolean(dmMsg);
+        }
+
+        return interaction.reply({
+          content: dmSent
+            ? `📣 تم استدعاء صاحب التذكرة <@${ownerId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+            : `📣 تم استدعاء صاحب التذكرة <@${ownerId}> بواسطة <@${interaction.user.id}> (الخاص مقفول لديه).`
+        });
+      }
+
+      if (!ticket.claimedBy && !staffMember && !isOwner) {
+        return interaction.reply({
+          content: '⚠️ يرجى استلام التكت',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      if (id === 'tkt_unclaim') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        if (!ticket.claimedBy) {
+          return interaction.reply({
+            content: '⚠️ التذكرة غير مستلمة حالياً.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        ticket.claimedBy = null;
+        saveData(data);
+
+        if (interaction.message && interaction.message.editable) {
+          await interaction.message.edit({
+            components: buildTicketActionRows(data.buttons, null)
+          }).catch(() => null);
+        }
+
+        return interaction.reply({
+          content: `🔓 تم إلغاء استلام التذكرة بواسطة <@${interaction.user.id}> وأصبح الاستلام متاحاً من جديد.`
+        });
+      }
+
+      if (id === 'tkt_call_staff') {
+        if (!staffMember && !isOwner) {
+          return interaction.reply({
+            content: '❌ لا تملك صلاحية استخدام هذا الزر.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        if (ticket.claimedBy) {
+          return interaction.reply({
+            content: `📣 تم استدعاء الإداري المستلم: <@${ticket.claimedBy}> بواسطة <@${interaction.user.id}>.`
+          });
+        } else {
+          const mentions = getCategoryMentions(ticket.categoryKey);
+          return interaction.reply({
+            content: `📣 تم طلب الإدارة بواسطة <@${interaction.user.id}>: ${mentions || 'يرجى متابعة التذكرة'}`
+          });
+        }
+      }
+
+      if (id === 'tkt_call_user') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const searchModal = new ModalBuilder()
+          .setCustomId('call_user_search_modal')
+          .setTitle('طلب عضو | بحث بالاسم أو اليوزر');
+
+        const queryInput = new TextInputBuilder()
+          .setCustomId('user_search_query')
+          .setLabel('اكتب حرفين أو أكثر أو الاسم/اليوزر كامل')
+          .setStyle(TextInputStyle.Short)
+          .setMinLength(2)
+          .setRequired(true);
+
+        searchModal.addComponents(new ActionRowBuilder().addComponents(queryInput));
+        return interaction.showModal(searchModal);
+      }
+    }
+  }
+
+  // ================= معالجة القوائم المنسدلة =================
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('pick_call_user_')) {
+    const ticketChannelId = interaction.customId.replace('pick_call_user_', '');
+    const targetUserId = interaction.values[0];
+    const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
+
+    if (!ticketChannel) {
+      return interaction.update({
+        content: '❌ تعذر العثور على روم التذكرة.',
+        components: []
+      });
+    }
+
+    await ticketChannel.permissionOverwrites.edit(targetUserId, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      AttachFiles: true
+    });
+
+    const targetUser = await client.users.fetch(targetUserId).catch(() => null);
+    let dmSent = false;
+
+    if (targetUser) {
+      const dmMsg = await targetUser
+        .send(
+          `📩 مرحباً <@${targetUserId}>، تم إضافتك إلى التذكرة <#${ticketChannel.id}> وتم طلبك بواسطة الإداري <@${interaction.user.id}>.`
+        )
+        .catch(() => null);
+      dmSent = Boolean(dmMsg);
+    }
+
+    if (dmSent) {
+      await ticketChannel.send({
+        content:
+          `✅ تم إرسال رسالة للعضو في الخاص ووصلته بنجاح.\n` +
+          `📣 <@${targetUserId}> تم طلبك في التذكرة بواسطة الإداري <@${interaction.user.id}>.`
+      });
+    } else {
+      await ticketChannel.send({
+        content:
+          `❌ فشل إرسال الرسالة للعضو في الخاص لأن الخاص مقفول لديه.\n` +
+          `📣 <@${targetUserId}>`
+      });
+    }
+
+    return interaction.update({
+      content: dmSent
+        ? `✅ تم إرسال الرسالة في الخاص للعضو <@${targetUserId}> ومنشنته داخل التذكرة.`
+        : `⚠️ فشل إرسال الرسالة في الخاص للعضو <@${targetUserId}> وتمت منشنته داخل التذكرة فقط.`,
+      components: []
+    });
+  }
+
+  // ================= معالجة المودالات =================
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith('ticket_reason_modal_')) {
+      const catKey = interaction.customId.replace('ticket_reason_modal_', '');
+      const category = CATEGORIES[catKey];
+      if (!category) {
+        return interaction.reply({
+          content: '❌ القسم غير متاح.',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const preData = loadData();
+      preData.ticketCooldowns = preData.ticketCooldowns || {};
+      const lastOpenedAt = preData.ticketCooldowns[interaction.user.id] || 0;
+      const remainingMs = TICKET_COOLDOWN_MS - (Date.now() - lastOpenedAt);
+
+      if (remainingMs > 0) {
+        return interaction.reply({
+          content: `⏳ لقد فتحت تذكرة مؤخراً. يمكنك فتح تذكرة جديدة في أي قسم بعد **${formatDuration(remainingMs)}**.`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const reasonText = (interaction.fields.getTextInputValue('ticket_reason_input') || '').trim();
+      if (!reasonText) {
+        return interaction.reply({
+          content: '❌ يرجى كتابة المحتوى المطلوب قبل إرسال التذكرة.',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const channel = await createTicketChannelForInteraction({
+        guild: interaction.guild,
+        member: interaction.member,
+        clientInstance: client,
+        catKey,
+        category,
+        submittedReason: reasonText
+      });
+
+      return interaction.editReply({
+        content: `✅ تم فتح تذكرتك بنجاح: <#${channel.id}>`
+      });
+    }
+
+    if (interaction.customId === 'call_user_search_modal') {
+      const query = interaction.fields.getTextInputValue('user_search_query').trim().toLowerCase();
+      await interaction.guild.members.fetch().catch(() => null);
+
+      const matches = interaction.guild.members.cache
+        .filter((m) => {
+          if (m.user.bot) return false;
+          const uname = (m.user.username || '').toLowerCase();
+          const gname = (m.user.globalName || '').toLowerCase();
+          const dname = (m.displayName || '').toLowerCase();
+          return uname.includes(query) || gname.includes(query) || dname.includes(query);
+        })
+        .first(25);
+
+      if (!matches || matches.length === 0) {
+        return interaction.reply({
+          content: `❌ لم يتم العثور على أعضاء مطابقين لـ **"${query}"**.`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId(`pick_call_user_${interaction.channel.id}`)
+        .setPlaceholder('اختر العضو المطلوب من النتائج...')
+        .addOptions(
+          matches.map((m) => ({
+            label: m.displayName.slice(0, 100),
+            description: `@${m.user.username}`.slice(0, 100),
+            value: m.id
+          }))
+        );
+
+      return interaction.reply({
+        content: `🔎 نتائج البحث عن **"${query}"** (${matches.length}):`,
+        components: [new ActionRowBuilder().addComponents(select)],
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    if (interaction.customId.startsWith('rating_reason_modal_')) {
+      const chId = interaction.customId.replace('rating_reason_modal_', '');
+      const reasonVal = interaction.fields.getTextInputValue('rating_reason_input') || '';
+      const state = client._pendingRatings?.get(chId);
+
+      if (state) {
+        state.reason = reasonVal;
+        state.submitted = true;
+      }
+
+      return interaction.reply({
+        content: '✅ تم تسجيل تقييمك وسببه بنجاح.',
+        flags: MessageFlags.Ephemeral
+      });
+    }
+  }
+});
+
+client.login(process.env.DISCORD_TOKEN);
