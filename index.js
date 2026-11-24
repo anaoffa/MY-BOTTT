@@ -723,6 +723,7 @@ function buildTopClaimsPayload(data) {
 async function updateTopClaimsBoard() {
   if (!CONFIG.topClaimsChannelId) return;
   const data = loadData();
+  // لا يتم إرسال أو تحديث التوب 5 في وضع الصيانة أو الأوفلاين للحفاظ على البيانات دون إرسال رسائل
   if (isBotRestrictedMode(data)) return;
 
   const channel = await client.channels.fetch(CONFIG.topClaimsChannelId).catch(() => null);
@@ -824,6 +825,7 @@ client.on('messageCreate', async (message) => {
   const data = loadData();
   const botMode = data.botState?.mode || 'online';
 
+  // في وضع الأوفلاين أو الصيانة لا يستجيب البوت لرسائل الشات العادية
   if (botMode === 'offline' || botMode === 'maintenance') {
     return;
   }
@@ -836,6 +838,7 @@ client.on('messageCreate', async (message) => {
   const trimmedContent = (message.content || '').trim();
   const normalizedContent = trimmedContent.toLowerCase();
 
+  // 1) إنهاء وضع AFK عند كتابة أي رسالة من العضو نفسه + عرض المحاولات التي حدثت أثناء غيابه
   if (currentAfkEntry) {
     const elapsedSinceSet = Date.now() - currentAfkEntry.since;
     if (elapsedSinceSet > 1500) {
@@ -854,6 +857,7 @@ client.on('messageCreate', async (message) => {
       }).catch(() => null);
     }
   } else if (normalizedContent) {
+    // 2) تفعيل وضع AFK تلقائياً لو كتب العضو أحد اختصاراته النصية (بحد أقصى 3 اختصارات)
     const userShortcuts = Array.isArray(data.afkShortcuts[message.author.id])
       ? data.afkShortcuts[message.author.id]
       : [];
@@ -876,6 +880,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // 3) التحقق إن كان المرسل منشن أو رد (Reply) على عضو في وضع AFK
   const targetAfkUserIds = new Set();
   if (message.mentions?.users?.size) {
     for (const u of message.mentions.users.values()) {
@@ -943,6 +948,7 @@ client.on('interactionCreate', async (interaction) => {
       interaction.customId
     );
 
+  // لوحة تحكم المالك متاحة لصاحب البوت فقط في أي وقت
   if (isControlCommand || isControlButton) {
     if (!isBotOwner(interaction.user.id)) {
       if (interaction.isRepliable()) {
@@ -985,10 +991,12 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  // في وضع الأوفلاين: لا يستجيب البوت نهائياً لغير المالك ليترك تحذير ديسكورد الطبيعي
   if (botMode === 'offline' && !isBotOwner(interaction.user.id)) {
     return;
   }
 
+  // في وضع الصيانة: يبلغ المستخدم بوجود صيانة لأي أمر أو تكت أو زر
   if (botMode === 'maintenance' && !isBotOwner(interaction.user.id)) {
     if (interaction.isRepliable()) {
       return interaction.reply({
@@ -1078,6 +1086,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
+      // action === 'set' (إضافة أو تعديل)
       const reasonToSave = rawReason || (existingIndex !== -1 ? currentList[existingIndex].reason : 'غير محدد');
 
       if (existingIndex !== -1) {
@@ -1132,6 +1141,7 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
+    // أوامر سلاش تعديل الأزرار وأمر /reset
     await handleConfigSlashCommand(interaction, {
       loadData,
       saveData,
@@ -1151,6 +1161,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.update(payload);
     }
 
+    // 1) فتح قسم من لوحة التذاكر
     if (id.startsWith('open_ticket_')) {
       const catKey = id.replace('open_ticket_', '');
       const category = CATEGORIES[catKey];
@@ -1168,6 +1179,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
+      // فتح مودال لكل الأقسام ماعدا الميديا والمتجر
       if (shouldOpenTicketModal(catKey)) {
         return interaction.showModal(buildTicketReasonModal(catKey));
       }
@@ -1188,6 +1200,7 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
+    // 2) الأزرار داخل التذكرة
     if (id.startsWith('tkt_')) {
       const data = loadData();
       const ticket = data.tickets[interaction.channel.id];
@@ -1212,6 +1225,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
+      // زر الاستلام (Claim) مع منع التضارب وحساب النقاط لأول مستلم فقط
       if (id === 'tkt_claim') {
         if (!staffMember) {
           return interaction.reply({
@@ -1282,6 +1296,7 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
+      // زر الإغلاق -> متاح للإدارة والـ Senior والإدارة العليا فقط (ممنوع على الأعضاء وصاحب التذكرة)
       if (id === 'tkt_close') {
         const canCloseTicket =
           !isOwner &&
@@ -1448,29 +1463,4 @@ client.on('interactionCreate', async (interaction) => {
 
               await logCh.send({
                 content:
-                  `${highMentions ? `${highMentions}\n` : ''}` +
-                  `📁 **سجل تذكرة مغلقة | Ticket Transcript**\n` +
-                  `• **العضو:** <@${currentTicket.ownerId}>\n` +
-                  `• **الإداري المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}\n` +
-                  `• **التقييم:** ${finalStarsText}\n` +
-                  `• **السبب:** ${finalReasonText}\n` +
-                  `• **تم الإغلاق بواسطة:** <@${closedById}>`,
-                files: [file]
-              });
-            }
-          }
-
-          client._pendingRatings?.delete(interaction.channel.id);
-          delete latestData.tickets[interaction.channel.id];
-          saveData(latestData);
-
-          await interaction.channel.delete('Ticket closed after rating window').catch(() => null);
-        });
-        return;
-      }
-
-      if (id === 'tkt_summon_user') {
-        if (!staffMember && !isClaimer) {
-          return interaction.reply({
-            content: '❌ هذا الزر مخصص للإدارة فقط.',
-            
+                  `${highMentions ? `${high
