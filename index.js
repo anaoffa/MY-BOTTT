@@ -40,13 +40,8 @@ const claimLocks = new Set();
 // مدة الانتظار بين فتح التذاكر في كل الأقسام (دقيقتان)
 const TICKET_COOLDOWN_MS = 2 * 60 * 1000;
 
-// نصوص افتراضية لأمر /afk والـ 3 اختصارات
-const AFK_SHORTCUT_DEFAULTS = {
-  afk: 'غير محدد',
-  afk1: 'مشغول حالياً',
-  afk2: 'راجع بعد شوية',
-  afk3: 'خارج الجهاز'
-};
+// الحد الأقصى لاختصارات AFK النصية لكل عضو
+const MAX_AFK_SHORTCUTS = 3;
 
 // ================= الإعدادات والـ IDs =================
 const parseIds = (val) =>
@@ -143,7 +138,7 @@ const CATEGORIES = {
   }
 };
 
-// حفظ حالة التذاكر، عداد الاستلام، وتخصيص الأزرار
+// حفظ حالة التذاكر، عداد الاستلام، اختصارات AFK، وتخصيص الأزرار
 const DATA_FILE = path.join(__dirname, 'tickets_data.json');
 
 function loadData() {
@@ -161,6 +156,7 @@ function loadData() {
       tickets: {},
       claimStats: {},
       afkUsers: {},
+      afkShortcuts: {},
       ticketCooldowns: {},
       topBoardMessageId: null,
       buttons: defaultButtons
@@ -173,12 +169,21 @@ function loadData() {
     parsed.tickets = parsed.tickets || {};
     parsed.claimStats = parsed.claimStats || {};
     parsed.afkUsers = parsed.afkUsers || {};
+    parsed.afkShortcuts = parsed.afkShortcuts || {};
     parsed.ticketCooldowns = parsed.ticketCooldowns || {};
     parsed.topBoardMessageId = parsed.topBoardMessageId || null;
     parsed.buttons = Object.assign(defaultButtons, parsed.buttons || {});
     return parsed;
   } catch {
-    return { tickets: {}, claimStats: {}, afkUsers: {}, ticketCooldowns: {}, topBoardMessageId: null, buttons: defaultButtons };
+    return {
+      tickets: {},
+      claimStats: {},
+      afkUsers: {},
+      afkShortcuts: {},
+      ticketCooldowns: {},
+      topBoardMessageId: null,
+      buttons: defaultButtons
+    };
   }
 }
 
@@ -200,6 +205,42 @@ function formatDuration(ms) {
   parts.push(`${seconds} ثانية`);
 
   return parts.join(' و ');
+}
+
+function formatFancyCounter(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const parts = [];
+  if (days > 0) parts.push(`【 ${pad(days)} يوم 】`);
+  parts.push(`【 ${pad(hours)} ساعة 】`);
+  parts.push(`【 ${pad(minutes)} دقيقة 】`);
+  parts.push(`【 ${pad(seconds)} ثانية 】`);
+  return parts.join(' ◈ ');
+}
+
+function buildAfkActivatedPayload(userId, reason, sinceMs) {
+  const unixSec = Math.floor(sinceMs / 1000);
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('💤 ═══『 وضع الغياب • AFK 』═══ 💤')
+    .setDescription(
+      `> 👤 **العضو:** <@${userId}>\n` +
+      `> 📝 **السبب:** ${reason}\n` +
+      `> ⏱️ **بدأ منذ:** <t:${unixSec}:R> (<t:${unixSec}:t>)\n` +
+      `> ⏳ **العداد:** ${formatFancyCounter(0)}`
+    )
+    .setFooter({ text: 'سيتم إنهاء وضع AFK تلقائياً فور كتابتك لأي رسالة' })
+    .setTimestamp(sinceMs);
+
+  return {
+    content: `<@${userId}>`,
+    embeds: [embed]
+  };
 }
 
 function mapStyle(styleName) {
@@ -279,25 +320,6 @@ function getCategoryMentions(categoryKey) {
     return CONFIG.highRoles.map((id) => `<@&${id}>`).join(' ');
   }
   return '';
-}
-
-async function activateAfk(interaction, defaultReason = 'غير محدد') {
-  const customReason = interaction.options.getString('reason');
-  const reason = customReason && customReason.trim().length > 0
-    ? customReason.trim()
-    : defaultReason;
-
-  const data = loadData();
-  data.afkUsers = data.afkUsers || {};
-  data.afkUsers[interaction.user.id] = {
-    since: Date.now(),
-    reason
-  };
-  saveData(data);
-
-  return interaction.reply({
-    content: `💤 تم تفعيل وضع **AFK** لـ <@${interaction.user.id}>${reason !== 'غير محدد' ? ` — السبب: **${reason}**` : ''}. سيتم حساب الوقت وإظهار نتيجته أول ما تكتب رسالة.`
-  });
 }
 
 // ================= لوحة توب 5 مستلمين التكتات =================
@@ -421,30 +443,208 @@ client.once('ready', async () => {
   await updateTopClaimsBoard();
 });
 
-// ================= نظام AFK عند الكتابة في الشات =================
+// ================= نظام AFK والاختصارات والمنشن/الرد =================
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
   const data = loadData();
   data.afkUsers = data.afkUsers || {};
-  const afkEntry = data.afkUsers[message.author.id];
+  data.afkShortcuts = data.afkShortcuts || {};
+  let dataChanged = false;
 
-  if (afkEntry) {
-    const durationText = formatDuration(Date.now() - afkEntry.since);
-    delete data.afkUsers[message.author.id];
-    saveData(data);
+  const currentAfkEntry = data.afkUsers[message.author.id];
+  const trimmedContent = (message.content || '').trim();
+  const normalizedContent = trimmedContent.toLowerCase();
+
+  // 1) إنهاء وضع AFK عند كتابة أي رسالة من العضو نفسه (ما لم تكن نفس رسالة التفعيل الفورية)
+  if (currentAfkEntry) {
+    const elapsedSinceSet = Date.now() - currentAfkEntry.since;
+    if (elapsedSinceSet > 1500) {
+      const fancyCounter = formatFancyCounter(elapsedSinceSet);
+      delete data.afkUsers[message.author.id];
+      dataChanged = true;
+
+      await message.reply({
+        content:
+          `👋 أهلاً بعودتك <@${message.author.id}>! تم إنهاء وضع **AFK**\n` +
+          `⏳ **مدة غيابك:** ${fancyCounter}`
+      }).catch(() => null);
+    }
+  } else if (normalizedContent) {
+    // 2) تفعيل وضع AFK تلقائياً لو كتب العضو أحد اختصاراته النصية (بحد أقصى 3 اختصارات)
+    const userShortcuts = Array.isArray(data.afkShortcuts[message.author.id])
+      ? data.afkShortcuts[message.author.id]
+      : [];
+
+    const matchedShortcut = userShortcuts.find(
+      (item) => item && String(item.word || '').toLowerCase() === normalizedContent
+    );
+
+    if (matchedShortcut) {
+      const now = Date.now();
+      const reason = matchedShortcut.reason || 'غير محدد';
+      data.afkUsers[message.author.id] = {
+        since: now,
+        reason
+      };
+      dataChanged = true;
+
+      await message.reply(buildAfkActivatedPayload(message.author.id, reason, now)).catch(() => null);
+    }
+  }
+
+  // 3) التحقق إن كان المرسل منشن أو رد (Reply) على عضو في وضع AFK
+  const targetAfkUserIds = new Set();
+  if (message.mentions?.users?.size) {
+    for (const u of message.mentions.users.values()) {
+      if (!u.bot && u.id !== message.author.id) {
+        targetAfkUserIds.add(u.id);
+      }
+    }
+  }
+
+  if (message.reference?.messageId) {
+    const repliedMsg = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+    if (repliedMsg?.author && !repliedMsg.author.bot && repliedMsg.author.id !== message.author.id) {
+      targetAfkUserIds.add(repliedMsg.author.id);
+    }
+  }
+
+  for (const afkUserId of targetAfkUserIds) {
+    const targetEntry = data.afkUsers[afkUserId];
+    if (!targetEntry) continue;
+
+    const awayFancy = formatFancyCounter(Date.now() - targetEntry.since);
+    const awayReason = targetEntry.reason || 'غير محدد';
 
     await message.reply({
-      content: `👋 أهلاً بعودتك <@${message.author.id}>! تم إنهاء وضع **AFK** — إجمالي مدة غيابك: **${durationText}**.`
+      content:
+        `💤 العضو <@${afkUserId}> في وضع **AFK** حالياً\n` +
+        `> 📝 **السبب:** ${awayReason}\n` +
+        `> ⏳ **مدة الغياب:** ${awayFancy}`
     }).catch(() => null);
+
+    await message.channel.send({
+      content:
+        `🔔 <@${afkUserId}> العضو <@${message.author.id}> حاول التواصل معك وأنت في وضع **AFK** — [اضغط هنا للانتقال إلى الرسالة](${message.url})`
+    }).catch(() => null);
+  }
+
+  if (dataChanged) {
+    saveData(data);
   }
 });
 
 // ================= معالجة أوامر السلاش =================
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand()) {
-    if (Object.prototype.hasOwnProperty.call(AFK_SHORTCUT_DEFAULTS, interaction.commandName)) {
-      return activateAfk(interaction, AFK_SHORTCUT_DEFAULTS[interaction.commandName]);
+    if (interaction.commandName === 'afk') {
+      const reason = (interaction.options.getString('reason') || '').trim() || 'غير محدد';
+      const now = Date.now();
+      const data = loadData();
+      data.afkUsers = data.afkUsers || {};
+      data.afkUsers[interaction.user.id] = {
+        since: now,
+        reason
+      };
+      saveData(data);
+
+      return interaction.reply(buildAfkActivatedPayload(interaction.user.id, reason, now));
+    }
+
+    if (interaction.commandName === 'editafk') {
+      const action = interaction.options.getString('action');
+      const rawWord = (interaction.options.getString('word') || '').trim();
+      const rawReason = (interaction.options.getString('reason') || '').trim();
+
+      const data = loadData();
+      data.afkShortcuts = data.afkShortcuts || {};
+      const currentList = Array.isArray(data.afkShortcuts[interaction.user.id])
+        ? [...data.afkShortcuts[interaction.user.id]]
+        : [];
+
+      if (action === 'list') {
+        if (currentList.length === 0) {
+          return interaction.reply({
+            content: `ℹ️ ليس لديك أي اختصارات AFK مسجلة حالياً (الحد الأقصى: **${MAX_AFK_SHORTCUTS}** اختصارات).`,
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const formattedList = currentList
+          .map((item, idx) => `${idx + 1}. الكلمة: **${item.word}** — السبب: **${item.reason || 'غير محدد'}**`)
+          .join('\n');
+
+        return interaction.reply({
+          content: `📋 **اختصارات AFK الخاصة بك (${currentList.length}/${MAX_AFK_SHORTCUTS}):**\n${formattedList}`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      if (!rawWord) {
+        return interaction.reply({
+          content: '❌ يرجى كتابة الكلمة أو الجملة في خيار `word` (مثال: `بروح`).',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const lowerWord = rawWord.toLowerCase();
+      const existingIndex = currentList.findIndex(
+        (item) => String(item.word || '').toLowerCase() === lowerWord
+      );
+
+      if (action === 'remove') {
+        if (existingIndex === -1) {
+          return interaction.reply({
+            content: `❌ الاختصار **"${rawWord}"** غير موجود ضمن اختصاراتك.`,
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        currentList.splice(existingIndex, 1);
+        if (currentList.length > 0) {
+          data.afkShortcuts[interaction.user.id] = currentList;
+        } else {
+          delete data.afkShortcuts[interaction.user.id];
+        }
+        saveData(data);
+
+        return interaction.reply({
+          content: `🗑️ تم حذف الاختصار **"${rawWord}"** بنجاح (${currentList.length}/${MAX_AFK_SHORTCUTS}).`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // action === 'set' (إضافة أو تعديل)
+      const reasonToSave = rawReason || (existingIndex !== -1 ? currentList[existingIndex].reason : 'غير محدد');
+
+      if (existingIndex !== -1) {
+        currentList[existingIndex] = {
+          word: rawWord,
+          reason: reasonToSave
+        };
+      } else {
+        if (currentList.length >= MAX_AFK_SHORTCUTS) {
+          return interaction.reply({
+            content: `⚠️ وصلت للحد الأقصى وهو **${MAX_AFK_SHORTCUTS} اختصارات** فقط. احذف اختصاراً أولاً عبر \`/editafk action:حذف\`.`,
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        currentList.push({
+          word: rawWord,
+          reason: reasonToSave
+        });
+      }
+
+      data.afkShortcuts[interaction.user.id] = currentList;
+      saveData(data);
+
+      return interaction.reply({
+        content:
+          `✅ تم حفظ الاختصار **"${rawWord}"** (السبب: **${reasonToSave}**).\n` +
+          `عند كتابة **"${rawWord}"** في الشات بدون سلاش سيتم تفعيل وضع **AFK** تلقائياً (${currentList.length}/${MAX_AFK_SHORTCUTS}).`,
+        flags: MessageFlags.Ephemeral
+      });
     }
 
     if (interaction.commandName === 'applyt') {
