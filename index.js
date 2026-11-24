@@ -64,8 +64,10 @@ const CATEGORIES = {
     emoji: '🛠️',
     style: ButtonStyle.Secondary,
     body:
-      `1 - Technical Support | الدعم الفني\n` +
-      `-# Report technical problems, bugs, or issues affecting your gameplay.\n` +
+      `1 - Technical Support | الدعم الفني
+` +
+      `-# Report technical problems, bugs, or issues affecting your gameplay.
+` +
       `-# للإبلاغ عن المشاكل التقنية والأخطاء التي تواجهك أثناء اللعب.`,
     mentionType: 'junior'
   },
@@ -76,8 +78,10 @@ const CATEGORIES = {
     emoji: '💬',
     style: ButtonStyle.Secondary,
     body:
-      `2 - General Questions | الاستفسارات العامة\n` +
-      `-# Need information? Ask us about the server, its features, or rules.\n` +
+      `2 - General Questions | الاستفسارات العامة
+` +
+      `-# Need information? Ask us about the server, its features, or rules.
+` +
       `-# للاستفسار عن السيرفر وأنظمته ومميزاته والقوانين الخاصة به.`,
     mentionType: 'junior'
   },
@@ -88,8 +92,10 @@ const CATEGORIES = {
     emoji: '🛒',
     style: ButtonStyle.Secondary,
     body:
-      `3 - Store & Payments | المتجر والمدفوعات\n` +
-      `-# Get help with rank purchases, Coin transactions, and payment issues.\n` +
+      `3 - Store & Payments | المتجر والمدفوعات
+` +
+      `-# Get help with rank purchases, Coin transactions, and payment issues.
+` +
       `-# للمساعدة في شراء الرتب والكوينز ومتابعة عمليات الدفع.`,
     mentionType: 'junior_and_senior'
   },
@@ -100,8 +106,10 @@ const CATEGORIES = {
     emoji: '🚨',
     style: ButtonStyle.Secondary,
     body:
-      `4 - Player Reports | الشكاوى والبلاغات\n` +
-      `-# Report players who break the rules or engage in inappropriate behavior.\n` +
+      `4 - Player Reports | الشكاوى والبلاغات
+` +
+      `-# Report players who break the rules or engage in inappropriate behavior.
+` +
       `-# لتقديم بلاغ ضد لاعب مخالف أو الإبلاغ عن تصرف غير مناسب.`,
     mentionType: 'junior'
   },
@@ -112,8 +120,10 @@ const CATEGORIES = {
     emoji: '👑',
     style: ButtonStyle.Secondary,
     body:
-      `5 - Management Contact | التواصل مع الإدارة\n` +
-      `-# Contact the senior management team regarding important or private matters.\n` +
+      `5 - Management Contact | التواصل مع الإدارة
+` +
+      `-# Contact the senior management team regarding important or private matters.
+` +
       `-# للتواصل مع الإدارة العليا بخصوص الأمور المهمة أو الخاصة.`,
     mentionType: 'high'
   },
@@ -124,8 +134,10 @@ const CATEGORIES = {
     emoji: '🎥',
     style: ButtonStyle.Secondary,
     body:
-      `6 - Media & Partnerships | التقديم على الميديا\n` +
-      `-# Apply for Media ranks or discuss content creation partnerships with SoftMC.\n` +
+      `6 - Media & Partnerships | التقديم على الميديا
+` +
+      `-# Apply for Media ranks or discuss content creation partnerships with SoftMC.
+` +
       `-# للتقديم على رتبة الميديا أو طلب التعاون وصناعة المحتوى مع SoftMC.`,
     mentionType: 'none'
   }
@@ -224,9 +236,12 @@ function buildAfkActivatedPayload(userId, reason, sinceMs) {
     .setColor(0xf1c40f)
     .setTitle('💤 ═══『 وضع الغياب • AFK 』═══ 💤')
     .setDescription(
-      `✦ **العضو:** <@${userId}>\n` +
-      `✦ **السبب:** ${reason}\n` +
-      `✦ **بدأ منذ:** <t:${unixSec}:R> (<t:${unixSec}:t>)\n` +
+      `✦ **العضو:** <@${userId}>
+` +
+      `✦ **السبب:** ${reason}
+` +
+      `✦ **بدأ منذ:** <t:${unixSec}:R> (<t:${unixSec}:t>)
+` +
       `✦ **العداد:** ${formatFancyCounter(0)}`
     )
     .setFooter({ text: 'SoftMC AFK • سيتم إنهاء الوضع تلقائياً عند أول رسالة تكتبها' })
@@ -243,7 +258,10 @@ function buildAfkWelcomeBackEmbed(userId, awayMs, missedContacts = []) {
 
   const contactsSection =
     Array.isArray(missedContacts) && missedContacts.length > 0
-      ? `\n\n📩 **محاولات التواصل أثناء غيابك (${missedContacts.length}):**\n` +
+      ? `
+
+📩 **محاولات التواصل أثناء غيابك (${missedContacts.length}):**
+` +
         missedContacts
           .slice(0, 10)
           .map((c) => {
@@ -251,14 +269,18 @@ function buildAfkWelcomeBackEmbed(userId, awayMs, missedContacts = []) {
             const linkPart = c.url ? ` — [الانتقال للرسالة](${c.url})` : '';
             return `• <@${c.senderId}> حاول التواصل معك ${timeTag}${linkPart}`;
           })
-          .join('\n')
-      : '\n\n✨ *لم يحاول أحد التواصل معك أثناء غيابك.*';
+          .join('
+')
+      : '
+
+✨ *لم يحاول أحد التواصل معك أثناء غيابك.*';
 
   return new EmbedBuilder()
     .setColor(0x2ecc71)
     .setTitle('⚡ ═══『 أهلاً بعودتك • AFK ENDED 』═══ ⚡')
     .setDescription(
-      `✦ **العضو:** <@${userId}>\n` +
+      `✦ **العضو:** <@${userId}>
+` +
       `✦ **مدة الغياب:** ${counterText}` +
       contactsSection
     )
@@ -512,14 +534,20 @@ async function createTicketChannelForInteraction({
 
   const mentions = getCategoryMentions(catKey);
   const reasonLine = submittedReason
-    ? `\n\n**${catKey === 'general' ? 'السؤال / الاستفسار' : 'السبب'}:** ${submittedReason}`
+    ? `
+
+**${catKey === 'general' ? 'السؤال / الاستفسار' : 'السبب'}:** ${submittedReason}`
     : '';
 
   const embedDescription =
-    `أهلاً بك <@${member.id}> في تذكرتك!\n\n` +
+    `أهلاً بك <@${member.id}> في تذكرتك!
+
+` +
     `${category.body}` +
     `${reasonLine}` +
-    `${mentions ? `\n\n${mentions}` : ''}`;
+    `${mentions ? `
+
+${mentions}` : ''}`;
 
   const ticketEmbed = new EmbedBuilder()
     .setColor(0xf1c40f)
@@ -543,7 +571,8 @@ function buildTopClaimsPayload(data) {
 
   const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
   const lines = entries.length
-    ? entries.map(([uid, count], i) => `${medals[i]} <@${uid}> — **${count}** تكت`).join('\n')
+    ? entries.map(([uid, count], i) => `${medals[i]} <@${uid}> — **${count}** تكت`).join('
+')
     : 'لا يوجد إداريون مستلمون للتذاكر حتى الآن.';
 
   const embed = new EmbedBuilder()
@@ -648,8 +677,50 @@ function buildTicketActionRows(buttonSettings, claimedBy = null) {
   return [row1, row2];
 }
 
+const STATUS_ROTATION_MS = 30 * 1000; // كل 30 ثانية
+const STATUS_MESSAGES = [
+  'أفضل بوت تكتات',
+  'صلي على النبي ﷺ',
+  'مركز دعم SoftMC جاهز لخدمتك',
+  'استلام التذاكر أسرع وأسهل',
+  'وضع AFK والاختصارات شغال 24/7',
+  'تقييمات الإدارة وسجل التذاكر تلقائي',
+  'نخدمك بأعلى سرعة ودقة',
+  'تذكرة واحدة تكفي لحل مشكلتك',
+  'فريق SoftMC في خدمتك دائماً',
+  'نظام تذاكر متكامل وموثوق',
+  '🇪🇬',
+  '𝒎𝒚 𝒅𝒆𝒗:  𝒋𝒖𝒔𝒕 𝒔𝒆𝒊𝒇🇪🇬🔱',
+  'I\'m deigned by ABAS👾🇮🇶',
+  '🇪🇬بوت مصري متكامل🇮🇶'
+];
+
+let statusIntervalId = null;
+
+function startStatusRotation(clientInstance) {
+  if (statusIntervalId) clearInterval(statusIntervalId);
+
+  const applyRandomStatus = () => {
+    if (!clientInstance?.user) return;
+    const picked = STATUS_MESSAGES[Math.floor(Math.random() * STATUS_MESSAGES.length)];
+    clientInstance.user.setPresence({
+      activities: [
+        {
+          name: picked,
+          type: 4 // Custom status
+        }
+      ],
+      status: 'online'
+    });
+  };
+
+  applyRandomStatus();
+  statusIntervalId = setInterval(applyRandomStatus, STATUS_ROTATION_MS);
+}
+
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  startStatusRotation(client);
   await registerSlashCommands(client);
   await updateTopClaimsBoard();
 });
@@ -744,8 +815,10 @@ client.on('messageCreate', async (message) => {
       .setColor(0xf39c12)
       .setTitle('💤 ═══『 العضو في وضع AFK 』═══ 💤')
       .setDescription(
-        `✦ **العضو:** <@${afkUserId}>\n` +
-        `✦ **السبب:** ${awayReason}\n` +
+        `✦ **العضو:** <@${afkUserId}>
+` +
+        `✦ **السبب:** ${awayReason}
+` +
         `✦ **مدة الغياب:** ${awayCounter}`
       )
       .setFooter({ text: 'سيتم إشعاره بمحاولة تواصلك فور عودته' });
@@ -799,10 +872,12 @@ client.on('interactionCreate', async (interaction) => {
 
           const formattedList = currentList
             .map((item, idx) => `${idx + 1}. الكلمة: **${item.word}** — السبب: **${item.reason || 'غير محدد'}**`)
-            .join('\n');
+            .join('
+');
 
           return interaction.reply({
-            content: `📋 **اختصارات AFK الخاصة بك (${currentList.length}/${MAX_AFK_SHORTCUTS}):**\n${formattedList}`,
+            content: `📋 **اختصارات AFK الخاصة بك (${currentList.length}/${MAX_AFK_SHORTCUTS}):**
+${formattedList}`,
             flags: MessageFlags.Ephemeral
           });
         }
@@ -866,7 +941,8 @@ client.on('interactionCreate', async (interaction) => {
 
         return interaction.reply({
           content:
-            `✅ تم حفظ الاختصار **"${rawWord}"** (السبب: **${reasonToSave}**).\n` +
+            `✅ تم حفظ الاختصار **"${rawWord}"** (السبب: **${reasonToSave}**).
+` +
             `عند كتابة **"${rawWord}"** في الشات بدون سلاش سيتم تفعيل وضع **AFK** تلقائياً (${currentList.length}/${MAX_AFK_SHORTCUTS}).`,
           flags: MessageFlags.Ephemeral
         });
@@ -1035,7 +1111,8 @@ client.on('interactionCreate', async (interaction) => {
               replyMsg = `✅ تم استلام التذكرة بواسطة <@${interaction.user.id}> (تم احتساب التكت لك مسبقاً في أول استلام — رصيدك: **${userTotal}**).`;
             } else if (previousClaimers.length > 0) {
               const prevMentions = previousClaimers.map((uid) => `<@${uid}>`).join('، ');
-              replyMsg += `\nℹ️ ملحوظة: تم احتساب التكت أيضاً للإداري السابق (${prevMentions}).`;
+              replyMsg += `
+ℹ️ ملحوظة: تم احتساب التكت أيضاً للإداري السابق (${prevMentions}).`;
             }
 
             return interaction.reply({ content: replyMsg });
@@ -1178,15 +1255,20 @@ client.on('interactionCreate', async (interaction) => {
               if (ratingsCh) {
                 const totalStarsLine =
                   totalStarsForStaff !== null
-                    ? `\n• **إجمالي التقييمات:** **${totalStarsForStaff} ⭐**`
+                    ? `
+• **إجمالي التقييمات:** **${totalStarsForStaff} ⭐**`
                     : '';
 
                 await ratingsCh.send({
                   content:
-                    `📊 **تقييم تذكرة جديدة**\n` +
-                    `• **العضو:** <@${currentTicket.ownerId}>\n` +
-                    `• **الإداري المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}\n` +
-                    `• **التقييم:** ${finalStarsText}\n` +
+                    `📊 **تقييم تذكرة جديدة**
+` +
+                    `• **العضو:** <@${currentTicket.ownerId}>
+` +
+                    `• **الإداري المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}
+` +
+                    `• **التقييم:** ${finalStarsText}
+` +
                     `• **السبب:** ${finalReasonText}` +
                     totalStarsLine
                 }).catch(() => null);
@@ -1245,11 +1327,16 @@ client.on('interactionCreate', async (interaction) => {
 
                 await logCh.send({
                   content:
-                    `${highMentions ? `${highMentions}\n` : ''}` +
-                    `📁 **سجل تذكرة مغلقة:** \`${interaction.channel.name}\`\n` +
-                    `• **صاحب التذكرة:** <@${currentTicket.ownerId}>\n` +
-                    `• **المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}\n` +
-                    `• **أغلقها:** <@${closedById}>\n` +
+                    `${highMentions ? `${highMentions}
+` : ''}` +
+                    `📁 **سجل تذكرة مغلقة:** \`${interaction.channel.name}\`
+` +
+                    `• **صاحب التذكرة:** <@${currentTicket.ownerId}>
+` +
+                    `• **المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}
+` +
+                    `• **أغلقها:** <@${closedById}>
+` +
                     `• **التقييم:** ${finalStarsText}`,
                   files: [file]
                 }).catch(() => null);
