@@ -512,184 +512,6 @@ function getCategoryMentions(categoryKey) {
   return '';
 }
 
-// تحديد ما إذا كان القسم يحتاج مودال قبل فتح التذكرة (الميديا والمتجر بدون مودال)
-function shouldOpenTicketModal(catKey) {
-  return catKey !== 'media' && catKey !== 'store';
-}
-
-function buildTicketReasonModal(catKey) {
-  const isGeneral = catKey === 'general';
-  const modalTitle = isGeneral ? 'استفسار جديد | General Question' : 'فتح تذكرة | Ticket Details';
-  const inputLabel = isGeneral ? 'يرجى كتابة سؤالك / استفسارك' : 'يرجى كتابة سبب المشكلة أو البلاغ';
-  const placeholder = isGeneral
-    ? 'اكتب سؤالك أو استفسارك هنا بوضوح...'
-    : 'اكتب سبب المشكلة أو تفاصيل البلاغ هنا بوضوح...';
-
-  const modal = new ModalBuilder()
-    .setCustomId(`ticket_reason_modal_${catKey}`)
-    .setTitle(modalTitle);
-
-  const input = new TextInputBuilder()
-    .setCustomId('ticket_reason_input')
-    .setLabel(inputLabel)
-    .setPlaceholder(placeholder)
-    .setStyle(TextInputStyle.Paragraph)
-    .setMinLength(2)
-    .setMaxLength(1000)
-    .setRequired(true);
-
-  modal.addComponents(new ActionRowBuilder().addComponents(input));
-  return modal;
-}
-
-// إنشاء روم التذكرة وإرسال الإيمبد داخلها (سواء مباشرة أو بعد إرسال المودال)
-async function createTicketChannelForInteraction({
-  guild,
-  member,
-  clientInstance,
-  catKey,
-  category,
-  submittedReason = null
-}) {
-  const data = loadData();
-  data.ticketCooldowns = data.ticketCooldowns || {};
-  data.ticketCooldowns[member.id] = Date.now();
-
-  const permissionOverwrites = [
-    {
-      id: guild.id,
-      deny: [PermissionFlagsBits.ViewChannel]
-    },
-    {
-      id: member.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.AttachFiles
-      ]
-    },
-    {
-      id: clientInstance.user.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ManageChannels,
-        PermissionFlagsBits.ManageMessages,
-        PermissionFlagsBits.ReadMessageHistory
-      ]
-    }
-  ];
-
-  if (catKey === 'management') {
-    // قسم الإدارة العليا: الإدارة العليا + رولات Senior المكتشفة في السيرفر + أصحاب صلاحية Administrator فقط
-    const seniorRoleIds = getDetectedSeniorRoleIds(guild);
-    const allowedManagementRoles = [...new Set([...CONFIG.highRoles, ...seniorRoleIds])];
-
-    for (const roleId of allowedManagementRoles) {
-      if (guild.roles.cache.has(roleId)) {
-        permissionOverwrites.push({
-          id: roleId,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles
-          ]
-        });
-      }
-    }
-
-    await guild.members.fetch().catch(() => null);
-    for (const guildMember of guild.members.cache.values()) {
-      if (
-        guildMember.id !== member.id &&
-        !guildMember.user.bot &&
-        guildMember.permissions?.has(PermissionFlagsBits.Administrator)
-      ) {
-        permissionOverwrites.push({
-          id: guildMember.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles
-          ]
-        });
-      }
-    }
-  } else {
-    const staffToAllow = [...new Set([...CONFIG.juniorRoles, ...CONFIG.seniorRoles, ...CONFIG.highRoles])];
-    for (const roleId of staffToAllow) {
-      if (guild.roles.cache.has(roleId)) {
-        permissionOverwrites.push({
-          id: roleId,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles
-          ]
-        });
-      }
-    }
-  }
-
-  const safeName = `${catKey}-${member.user.username}`
-    .toLowerCase()
-    .replace(/[^a-z0-9-_]/g, '')
-    .slice(0, 90) || `ticket-${Date.now().toString().slice(-5)}`;
-
-  const targetParent =
-    catKey === 'media' && CONFIG.mediaChannelId
-      ? CONFIG.mediaChannelId
-      : CONFIG.ticketCategoryId || null;
-
-  const channel = await guild.channels.create({
-    name: safeName,
-    type: ChannelType.GuildText,
-    parent:
-      targetParent && guild.channels.cache.get(targetParent)?.type === ChannelType.GuildCategory
-        ? targetParent
-        : CONFIG.ticketCategoryId || null,
-    permissionOverwrites
-  });
-
-  data.tickets[channel.id] = {
-    ownerId: member.id,
-    categoryKey: catKey,
-    reason: submittedReason || null,
-    claimedBy: null,
-    claimedHistory: [],
-    createdAt: new Date().toISOString()
-  };
-  saveData(data);
-
-  const mentions = getCategoryMentions(catKey);
-  const reasonLine = submittedReason
-    ? `\n\n**${catKey === 'general' ? 'السؤال / الاستفسار' : 'السبب'}:** ${submittedReason}`
-    : '';
-
-  const embedDescription =
-    `أهلاً بك <@${member.id}> في تذكرتك!\n\n` +
-    `${category.body}` +
-    `${reasonLine}` +
-    `${mentions ? `\n\n${mentions}` : ''}`;
-
-  const ticketEmbed = new EmbedBuilder()
-    .setColor(0xf1c40f)
-    .setTitle(category.label)
-    .setDescription(embedDescription);
-
-  await channel.send({
-    content: mentions || undefined,
-    embeds: [ticketEmbed],
-    components: buildTicketActionRows(data.buttons, null)
-  });
-
-  return channel;
-}
-
 // ================= لوحة توب 5 مستلمين التكتات =================
 function buildTopClaimsPayload(data) {
   const entries = Object.entries(data.claimStats || {})
@@ -1161,7 +983,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.update(payload);
     }
 
-    // 1) فتح قسم من لوحة التذاكر
+    // 1) فتح قسم من لوحة التذاكر (بما فيهم الميديا كتكت عادي)
     if (id.startsWith('open_ticket_')) {
       const catKey = id.replace('open_ticket_', '');
       const category = CATEGORIES[catKey];
@@ -1179,20 +1001,136 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // فتح مودال لكل الأقسام ماعدا الميديا والمتجر
-      if (shouldOpenTicketModal(catKey)) {
-        return interaction.showModal(buildTicketReasonModal(catKey));
-      }
-
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const channel = await createTicketChannelForInteraction({
-        guild: interaction.guild,
-        member: interaction.member,
-        clientInstance: client,
-        catKey,
-        category,
-        submittedReason: null
+      const data = loadData();
+      data.ticketCooldowns = data.ticketCooldowns || {};
+      data.ticketCooldowns[interaction.user.id] = Date.now();
+
+      const guild = interaction.guild;
+      const member = interaction.member;
+
+      const permissionOverwrites = [
+        {
+          id: guild.id,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: member.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles
+          ]
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.ManageMessages,
+            PermissionFlagsBits.ReadMessageHistory
+          ]
+        }
+      ];
+
+      if (catKey === 'management') {
+        // قسم الإدارة العليا: الإدارة العليا + رولات Senior المكتشفة في السيرفر + أصحاب صلاحية Administrator فقط
+        const seniorRoleIds = getDetectedSeniorRoleIds(guild);
+        const allowedManagementRoles = [...new Set([...CONFIG.highRoles, ...seniorRoleIds])];
+
+        for (const roleId of allowedManagementRoles) {
+          if (guild.roles.cache.has(roleId)) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
+        }
+
+        await guild.members.fetch().catch(() => null);
+        for (const guildMember of guild.members.cache.values()) {
+          if (
+            guildMember.id !== member.id &&
+            !guildMember.user.bot &&
+            guildMember.permissions?.has(PermissionFlagsBits.Administrator)
+          ) {
+            permissionOverwrites.push({
+              id: guildMember.id,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
+        }
+      } else {
+        const staffToAllow = [...new Set([...CONFIG.juniorRoles, ...CONFIG.seniorRoles, ...CONFIG.highRoles])];
+        for (const roleId of staffToAllow) {
+          if (guild.roles.cache.has(roleId)) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
+        }
+      }
+
+      const safeName = `${catKey}-${member.user.username}`
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '')
+        .slice(0, 90) || `ticket-${Date.now().toString().slice(-5)}`;
+
+      const targetParent =
+        catKey === 'media' && CONFIG.mediaChannelId
+          ? CONFIG.mediaChannelId
+          : CONFIG.ticketCategoryId || null;
+
+      const channel = await guild.channels.create({
+        name: safeName,
+        type: ChannelType.GuildText,
+        parent: targetParent && guild.channels.cache.get(targetParent)?.type === ChannelType.GuildCategory ? targetParent : (CONFIG.ticketCategoryId || null),
+        permissionOverwrites
+      });
+
+      data.tickets[channel.id] = {
+        ownerId: member.id,
+        categoryKey: catKey,
+        claimedBy: null,
+        claimedHistory: [],
+        createdAt: new Date().toISOString()
+      };
+      saveData(data);
+
+      const mentions = getCategoryMentions(catKey);
+      const embedDescription =
+        `أهلاً بك <@${member.id}> في تذكرتك!\n\n` +
+        `${category.body}` +
+        `${mentions ? `\n\n${mentions}` : ''}`;
+
+      const ticketEmbed = new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle(category.label)
+        .setDescription(embedDescription);
+
+      await channel.send({
+        content: mentions || undefined,
+        embeds: [ticketEmbed],
+        components: buildTicketActionRows(data.buttons, null)
       });
 
       return interaction.editReply({
@@ -1463,4 +1401,39 @@ client.on('interactionCreate', async (interaction) => {
 
               await logCh.send({
                 content:
-                  `${highMentions ? `${high
+                  `${highMentions ? `${highMentions}\n` : ''}` +
+                  `📁 **سجل تذكرة مغلقة | Ticket Transcript**\n` +
+                  `• **العضو:** <@${currentTicket.ownerId}>\n` +
+                  `• **الإداري المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}\n` +
+                  `• **التقييم:** ${finalStarsText}\n` +
+                  `• **السبب:** ${finalReasonText}\n` +
+                  `• **تم الإغلاق بواسطة:** <@${closedById}>`,
+                files: [file]
+              });
+            }
+          }
+
+          client._pendingRatings?.delete(interaction.channel.id);
+          delete latestData.tickets[interaction.channel.id];
+          saveData(latestData);
+
+          await interaction.channel.delete('Ticket closed after rating window').catch(() => null);
+        });
+        return;
+      }
+
+      // زر استدعاء عضو -> يستدعي صاحب التذكرة تلقائياً بدون كتابة اسم
+      if (id === 'tkt_summon_user') {
+        if (!staffMember && !isClaimer) {
+          return interaction.reply({
+            content: '❌ هذا الزر مخصص للإدارة فقط.',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const ownerId = ticket.ownerId;
+        await interaction.channel.permissionOverwrites.edit(ownerId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+        
