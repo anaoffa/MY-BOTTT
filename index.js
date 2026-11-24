@@ -138,7 +138,7 @@ const CATEGORIES = {
   }
 };
 
-// حفظ حالة التذاكر، عداد الاستلام، اختصارات AFK، وتخصيص الأزرار
+// حفظ حالة التذاكر، عداد الاستلام، إجمالي التقييمات، اختصارات AFK، وتخصيص الأزرار
 const DATA_FILE = path.join(__dirname, 'tickets_data.json');
 
 function loadData() {
@@ -155,6 +155,7 @@ function loadData() {
     const initial = {
       tickets: {},
       claimStats: {},
+      ratingStats: {},
       afkUsers: {},
       afkShortcuts: {},
       ticketCooldowns: {},
@@ -168,6 +169,7 @@ function loadData() {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     parsed.tickets = parsed.tickets || {};
     parsed.claimStats = parsed.claimStats || {};
+    parsed.ratingStats = parsed.ratingStats || {};
     parsed.afkUsers = parsed.afkUsers || {};
     parsed.afkShortcuts = parsed.afkShortcuts || {};
     parsed.ticketCooldowns = parsed.ticketCooldowns || {};
@@ -178,6 +180,7 @@ function loadData() {
     return {
       tickets: {},
       claimStats: {},
+      ratingStats: {},
       afkUsers: {},
       afkShortcuts: {},
       ticketCooldowns: {},
@@ -291,15 +294,32 @@ function isJuniorStaff(member) {
   return hasAnyRole(member, CONFIG.juniorRoles);
 }
 
+// التقاط رولات Senior من الإعدادات أو تلقائياً من السيرفر
+function getDetectedSeniorRoleIds(guild) {
+  const ids = new Set(CONFIG.seniorRoles);
+  if (guild?.roles?.cache) {
+    for (const role of guild.roles.cache.values()) {
+      if (role.id === guild.id) continue;
+      const rName = (role.name || '').toLowerCase();
+      if (rName.includes('senior') || rName.includes('سنيور')) {
+        ids.add(role.id);
+      }
+    }
+  }
+  return [...ids];
+}
+
 function isSeniorStaff(member) {
-  return hasAnyRole(member, CONFIG.seniorRoles);
+  if (!member) return false;
+  const seniorIds = getDetectedSeniorRoleIds(member.guild);
+  return hasAnyRole(member, seniorIds);
 }
 
 function isHighStaff(member) {
   return hasAnyRole(member, CONFIG.highRoles);
 }
 
-// قراءة إن كان العضو إدارياً بدون الاعتماد الصارم على IDs محددة فقط
+// قراءة إن كان العضو إدارياً أو إدارة عليا بدون الاعتماد الصارم على IDs محددة فقط
 function isAnyStaff(member, ticket = null) {
   if (!member) return false;
   if (ticket && ticket.claimedBy && member.id === ticket.claimedBy) return true;
@@ -791,18 +811,57 @@ client.on('interactionCreate', async (interaction) => {
         }
       ];
 
-      const staffToAllow = [...new Set([...CONFIG.juniorRoles, ...CONFIG.seniorRoles, ...CONFIG.highRoles])];
-      for (const roleId of staffToAllow) {
-        if (guild.roles.cache.has(roleId)) {
-          permissionOverwrites.push({
-            id: roleId,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-              PermissionFlagsBits.AttachFiles
-            ]
-          });
+      if (catKey === 'management') {
+        // قسم الإدارة العليا: الإدارة العليا + رولات Senior المكتشفة في السيرفر + أصحاب صلاحية Administrator فقط
+        const seniorRoleIds = getDetectedSeniorRoleIds(guild);
+        const allowedManagementRoles = [...new Set([...CONFIG.highRoles, ...seniorRoleIds])];
+
+        for (const roleId of allowedManagementRoles) {
+          if (guild.roles.cache.has(roleId)) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
+        }
+
+        await guild.members.fetch().catch(() => null);
+        for (const guildMember of guild.members.cache.values()) {
+          if (
+            guildMember.id !== member.id &&
+            !guildMember.user.bot &&
+            guildMember.permissions?.has(PermissionFlagsBits.Administrator)
+          ) {
+            permissionOverwrites.push({
+              id: guildMember.id,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
+        }
+      } else {
+        const staffToAllow = [...new Set([...CONFIG.juniorRoles, ...CONFIG.seniorRoles, ...CONFIG.highRoles])];
+        for (const roleId of staffToAllow) {
+          if (guild.roles.cache.has(roleId)) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles
+              ]
+            });
+          }
         }
       }
 
@@ -950,11 +1009,15 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      // زر الإغلاق -> أي إداري يقدر يغلقه أو صاحب التذكرة
+      // زر الإغلاق -> متاح للإدارة والـ Senior والإدارة العليا فقط (ممنوع على الأعضاء وصاحب التذكرة)
       if (id === 'tkt_close') {
-        if (!staffMember && !isOwner && !isClaimer) {
+        const canCloseTicket =
+          !isOwner &&
+          (staffMember || isClaimer || isJuniorStaff(member) || isSeniorStaff(member) || isHighStaff(member));
+
+        if (!canCloseTicket) {
           return interaction.reply({
-            content: '❌ لا تملك صلاحية إغلاق هذه التذكرة.',
+            content: '❌ هذا الزر مخصص للإدارة فقط ولا يمكن لصاحب التذكرة أو الأعضاء استخدامه.',
             flags: MessageFlags.Ephemeral
           });
         }
@@ -973,7 +1036,7 @@ client.on('interactionCreate', async (interaction) => {
         );
 
         const ratingPrompt = await interaction.channel.send({
-          content: `⭐ <@${ticket.ownerId}> يرجى تقييم الإداري خلال **12 ثانية** (لو لم تقيّم سيتم خصم 3 نجوم وتسجيل "العضو ماقيم"):`,
+          content: `⭐ <@${ticket.ownerId}> يرجى تقييم الإداري خلال **12 ثانية** (لو لم تقيّم سيتم احتساب 3 نجوم للإداري وتسجيل "العضو ماقيّم"):`,
           components: [starRow]
         });
 
@@ -1018,27 +1081,45 @@ client.on('interactionCreate', async (interaction) => {
 
           let finalStarsText;
           let finalReasonText;
+          let starsToAdd = 0;
 
           if (ratingState.stars === null) {
-            finalStarsText = 'العضو ماقيم (-3 ⭐)';
-            finalReasonText = 'العضو ماقيم';
+            starsToAdd = 3;
+            finalStarsText = 'العضو ماقيّم (+3 ⭐)';
+            finalReasonText = 'العضو ماقيّم (تم احتساب 3 نجوم)';
           } else {
+            starsToAdd = ratingState.stars;
             finalStarsText = `${ratingState.stars} / 5 ⭐`;
             finalReasonText = ratingState.reason && ratingState.reason.trim().length > 0
               ? ratingState.reason.trim()
               : 'لم يتم كتابة سبب';
           }
 
+          latestData.ratingStats = latestData.ratingStats || {};
+          let totalStarsForStaff = null;
+          if (currentTicket.claimedBy) {
+            latestData.ratingStats[currentTicket.claimedBy] =
+              (latestData.ratingStats[currentTicket.claimedBy] || 0) + starsToAdd;
+            totalStarsForStaff = latestData.ratingStats[currentTicket.claimedBy];
+          }
+          saveData(latestData);
+
           if (CONFIG.ratingsChannelId) {
             const ratingsCh = await client.channels.fetch(CONFIG.ratingsChannelId).catch(() => null);
             if (ratingsCh) {
+              const totalStarsLine =
+                totalStarsForStaff !== null
+                  ? `\n• **إجمالي التقييمات:** **${totalStarsForStaff} ⭐**`
+                  : '';
+
               await ratingsCh.send({
                 content:
                   `📊 **تقييم تذكرة جديدة**\n` +
                   `• **العضو:** <@${currentTicket.ownerId}>\n` +
                   `• **الإداري المستلم:** ${currentTicket.claimedBy ? `<@${currentTicket.claimedBy}>` : 'غير مستلمة'}\n` +
                   `• **التقييم:** ${finalStarsText}\n` +
-                  `• **السبب:** ${finalReasonText}`
+                  `• **السبب:** ${finalReasonText}` +
+                  totalStarsLine
               });
             }
           }
@@ -1259,7 +1340,7 @@ client.on('interactionCreate', async (interaction) => {
     if (targetUser) {
       const dmMsg = await targetUser
         .send(
-          `📩 مرحباً <@${targetUserId}>، تم فتح روم التذكرة لك وتم طلبك بواسطة الإداري <@${interaction.user.id}> في الروم <#${ticketChannel.id}>.`
+          `📩 مرحباً <@${targetUserId}>، تم إضافتك إلى التذكرة <#${ticketChannel.id}> وتم طلبك بواسطة الإداري <@${interaction.user.id}>.`
         )
         .catch(() => null);
       dmSent = Boolean(dmMsg);
@@ -1267,18 +1348,22 @@ client.on('interactionCreate', async (interaction) => {
 
     if (dmSent) {
       await ticketChannel.send({
-        content: `✅ تم فتح الروم للعضو <@${targetUserId}> وإرسال إشعار له في الخاص بواسطة <@${interaction.user.id}>.`
+        content:
+          `✅ تم إرسال رسالة للعضو في الخاص ووصلته بنجاح.\n` +
+          `📣 <@${targetUserId}> تم طلبك في التذكرة بواسطة الإداري <@${interaction.user.id}>.`
       });
     } else {
       await ticketChannel.send({
         content:
-          `⚠️ تم فتح الروم للعضو <@${targetUserId}> ويقدر يدخل يتكلم، ولكن الخاص مقفول لديه ولم تُرسل الرسالة في الخاص.\n` +
-          `📣 <@${targetUserId}> تم طلبك من قبل الإداري <@${interaction.user.id}>.`
+          `❌ فشل إرسال الرسالة للعضو في الخاص لأن الخاص مقفول لديه.\n` +
+          `📣 <@${targetUserId}>`
       });
     }
 
     return interaction.update({
-      content: `✅ تم إضافة <@${targetUserId}> وإتمام الإجراء بنجاح.`,
+      content: dmSent
+        ? `✅ تم إرسال الرسالة في الخاص للعضو <@${targetUserId}> ومنشنته داخل التذكرة.`
+        : `⚠️ فشل إرسال الرسالة في الخاص للعضو <@${targetUserId}> وتمت منشنته داخل التذكرة فقط.`,
       components: []
     });
   }
