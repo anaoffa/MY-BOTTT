@@ -207,6 +207,7 @@ function formatDuration(ms) {
   return parts.join(' و ');
 }
 
+// عداد مزخرف في سطر واحد متماسك بدون كسر للسطر في الموبايل
 function formatFancyCounter(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -215,12 +216,12 @@ function formatFancyCounter(ms) {
   const seconds = totalSeconds % 60;
 
   const pad = (n) => String(n).padStart(2, '0');
-  const parts = [];
-  if (days > 0) parts.push(`【 ${pad(days)} يوم 】`);
-  parts.push(`【 ${pad(hours)} ساعة 】`);
-  parts.push(`【 ${pad(minutes)} دقيقة 】`);
-  parts.push(`【 ${pad(seconds)} ثانية 】`);
-  return parts.join(' ◈ ');
+  const blocks = [];
+  if (days > 0) blocks.push(`⸢ ${pad(days)} يوم ⸥`);
+  blocks.push(`⸢ ${pad(hours)} ساعة ⸥`);
+  blocks.push(`⸢ ${pad(minutes)} دقيقة ⸥`);
+  blocks.push(`⸢ ${pad(seconds)} ثانية ⸥`);
+  return blocks.join(' • ');
 }
 
 function buildAfkActivatedPayload(userId, reason, sinceMs) {
@@ -229,18 +230,46 @@ function buildAfkActivatedPayload(userId, reason, sinceMs) {
     .setColor(0xf1c40f)
     .setTitle('💤 ═══『 وضع الغياب • AFK 』═══ 💤')
     .setDescription(
-      `> 👤 **العضو:** <@${userId}>\n` +
-      `> 📝 **السبب:** ${reason}\n` +
-      `> ⏱️ **بدأ منذ:** <t:${unixSec}:R> (<t:${unixSec}:t>)\n` +
-      `> ⏳ **العداد:** ${formatFancyCounter(0)}`
+      `✦ **العضو:** <@${userId}>\n` +
+      `✦ **السبب:** ${reason}\n` +
+      `✦ **بدأ منذ:** <t:${unixSec}:R> (<t:${unixSec}:t>)\n` +
+      `✦ **العداد:** ${formatFancyCounter(0)}`
     )
-    .setFooter({ text: 'سيتم إنهاء وضع AFK تلقائياً فور كتابتك لأي رسالة' })
+    .setFooter({ text: 'SoftMC AFK • سيتم إنهاء الوضع تلقائياً عند أول رسالة تكتبها' })
     .setTimestamp(sinceMs);
 
   return {
     content: `<@${userId}>`,
     embeds: [embed]
   };
+}
+
+function buildAfkWelcomeBackEmbed(userId, awayMs, missedContacts = []) {
+  const counterText = formatFancyCounter(awayMs);
+
+  const contactsSection =
+    Array.isArray(missedContacts) && missedContacts.length > 0
+      ? `\n\n📩 **محاولات التواصل أثناء غيابك (${missedContacts.length}):**\n` +
+        missedContacts
+          .slice(0, 10)
+          .map((c) => {
+            const timeTag = c.at ? `<t:${Math.floor(c.at / 1000)}:R>` : '';
+            const linkPart = c.url ? ` — [الانتقال للرسالة](${c.url})` : '';
+            return `• <@${c.senderId}> حاول التواصل معك ${timeTag}${linkPart}`;
+          })
+          .join('\n')
+      : '\n\n✨ *لم يحاول أحد التواصل معك أثناء غيابك.*';
+
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle('⚡ ═══『 أهلاً بعودتك • AFK ENDED 』═══ ⚡')
+    .setDescription(
+      `✦ **العضو:** <@${userId}>\n` +
+      `✦ **مدة الغياب:** ${counterText}` +
+      contactsSection
+    )
+    .setFooter({ text: 'SoftMC AFK • تم إنهاء وضع الغياب بنجاح' })
+    .setTimestamp();
 }
 
 function mapStyle(styleName) {
@@ -456,18 +485,22 @@ client.on('messageCreate', async (message) => {
   const trimmedContent = (message.content || '').trim();
   const normalizedContent = trimmedContent.toLowerCase();
 
-  // 1) إنهاء وضع AFK عند كتابة أي رسالة من العضو نفسه (ما لم تكن نفس رسالة التفعيل الفورية)
+  // 1) إنهاء وضع AFK عند كتابة أي رسالة من العضو نفسه + عرض المحاولات التي حدثت أثناء غيابه
   if (currentAfkEntry) {
     const elapsedSinceSet = Date.now() - currentAfkEntry.since;
     if (elapsedSinceSet > 1500) {
-      const fancyCounter = formatFancyCounter(elapsedSinceSet);
+      const missedContacts = Array.isArray(currentAfkEntry.missedContacts)
+        ? currentAfkEntry.missedContacts
+        : [];
       delete data.afkUsers[message.author.id];
       dataChanged = true;
 
+      const welcomeEmbed = buildAfkWelcomeBackEmbed(message.author.id, elapsedSinceSet, missedContacts);
+      const uniqueSendersMentions = [...new Set(missedContacts.map((c) => `<@${c.senderId}>`))].join(' ');
+
       await message.reply({
-        content:
-          `👋 أهلاً بعودتك <@${message.author.id}>! تم إنهاء وضع **AFK**\n` +
-          `⏳ **مدة غيابك:** ${fancyCounter}`
+        content: uniqueSendersMentions ? `<@${message.author.id}> ${uniqueSendersMentions}` : `<@${message.author.id}>`,
+        embeds: [welcomeEmbed]
       }).catch(() => null);
     }
   } else if (normalizedContent) {
@@ -485,7 +518,8 @@ client.on('messageCreate', async (message) => {
       const reason = matchedShortcut.reason || 'غير محدد';
       data.afkUsers[message.author.id] = {
         since: now,
-        reason
+        reason,
+        missedContacts: []
       };
       dataChanged = true;
 
@@ -514,19 +548,32 @@ client.on('messageCreate', async (message) => {
     const targetEntry = data.afkUsers[afkUserId];
     if (!targetEntry) continue;
 
-    const awayFancy = formatFancyCounter(Date.now() - targetEntry.since);
+    targetEntry.missedContacts = Array.isArray(targetEntry.missedContacts)
+      ? targetEntry.missedContacts
+      : [];
+
+    targetEntry.missedContacts.push({
+      senderId: message.author.id,
+      url: message.url,
+      at: Date.now()
+    });
+    dataChanged = true;
+
+    const awayCounter = formatFancyCounter(Date.now() - targetEntry.since);
     const awayReason = targetEntry.reason || 'غير محدد';
 
-    await message.reply({
-      content:
-        `💤 العضو <@${afkUserId}> في وضع **AFK** حالياً\n` +
-        `> 📝 **السبب:** ${awayReason}\n` +
-        `> ⏳ **مدة الغياب:** ${awayFancy}`
-    }).catch(() => null);
+    const statusEmbed = new EmbedBuilder()
+      .setColor(0xf39c12)
+      .setTitle('💤 ═══『 العضو في وضع AFK 』═══ 💤')
+      .setDescription(
+        `✦ **العضو:** <@${afkUserId}>\n` +
+        `✦ **السبب:** ${awayReason}\n` +
+        `✦ **مدة الغياب:** ${awayCounter}`
+      )
+      .setFooter({ text: 'سيتم إشعاره بمحاولة تواصلك فور عودته' });
 
-    await message.channel.send({
-      content:
-        `🔔 <@${afkUserId}> العضو <@${message.author.id}> حاول التواصل معك وأنت في وضع **AFK** — [اضغط هنا للانتقال إلى الرسالة](${message.url})`
+    await message.reply({
+      embeds: [statusEmbed]
     }).catch(() => null);
   }
 
@@ -545,7 +592,8 @@ client.on('interactionCreate', async (interaction) => {
       data.afkUsers = data.afkUsers || {};
       data.afkUsers[interaction.user.id] = {
         since: now,
-        reason
+        reason,
+        missedContacts: []
       };
       saveData(data);
 
