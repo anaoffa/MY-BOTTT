@@ -219,14 +219,10 @@ function buildPanelPayload() {
   };
 }
 
-function buildTopClaimsPayload(claimStatsOverride = null) {
-  const sourceClaims =
-    claimStatsOverride && typeof claimStatsOverride === 'object'
-      ? claimStatsOverride
-      : (getStats().claims || {});
-
-  const entries = Object.entries(sourceClaims)
-    .filter(([, count]) => Number(count) > 0)
+function buildTopClaimsPayload() {
+  const stats = getStats();
+  const entries = Object.entries(stats.claims || {})
+    .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
@@ -256,15 +252,15 @@ function buildTopClaimsPayload(claimStatsOverride = null) {
   return { embeds: [embed], components: [row] };
 }
 
-async function updateTopClaimsBoard(client, claimStatsOverride = null) {
+async function updateTopClaimsBoard(client) {
   const channelId = process.env.TOP_CLAIMS_CHANNEL_ID;
-  if (!channelId || !client?.channels) return;
+  if (!channelId) return;
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel || !channel.isTextBased()) return;
 
   const cfg = getConfig();
-  const payload = buildTopClaimsPayload(claimStatsOverride);
+  const payload = buildTopClaimsPayload();
 
   if (cfg.topClaimsMessageId) {
     const existingMsg = await channel.messages.fetch(cfg.topClaimsMessageId).catch(() => null);
@@ -283,7 +279,7 @@ async function updateTopClaimsBoard(client, claimStatsOverride = null) {
 
 async function sendConfigLog(client, { user, action, target, before, after }) {
   const logChannelId = process.env.CONFIG_LOG_CHANNEL_ID;
-  if (!logChannelId || !client?.channels) return;
+  if (!logChannelId) return;
 
   const channel = await client.channels.fetch(logChannelId).catch(() => null);
   if (!channel || !channel.isTextBased()) return;
@@ -634,7 +630,7 @@ async function handleConfigSlashCommand(interaction, helpers = {}) {
 
       if (typeof saveData === 'function') saveData(data);
       if (typeof updateBoard === 'function') await updateBoard();
-      await updateTopClaimsBoard(interaction.client, data.claimStats);
+      await updateTopClaimsBoard(interaction.client);
 
       return interaction.reply({
         content: `✅ تم تحديث نقاط <@${staffUser.id}> من **${prev}** إلى **${next}**.`,
@@ -644,7 +640,7 @@ async function handleConfigSlashCommand(interaction, helpers = {}) {
       data.claimStats = {};
       if (typeof saveData === 'function') saveData(data);
       if (typeof updateBoard === 'function') await updateBoard();
-      await updateTopClaimsBoard(interaction.client, data.claimStats);
+      await updateTopClaimsBoard(interaction.client);
 
       return interaction.reply({
         content: '✅ تم تصفير جميع نقاط استلام التذاكر بنجاح.',
